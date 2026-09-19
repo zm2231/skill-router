@@ -42,3 +42,25 @@ class ConfigTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ConfigTypeTests(unittest.TestCase):
+    def test_list_fields_must_be_string_lists(self):
+        for bad in (dict(extra_roots=[1]), dict(disabled_harnesses=1), dict(exclude="x"), dict(exclude=[None])):
+            with self.assertRaises(ConfigError, msg=bad):
+                Config(**bad)
+
+    def test_scalar_types(self):
+        for bad in (dict(shortlist="3"), dict(shortlist=True), dict(gate_floor="0.1"), dict(model=3)):
+            with self.assertRaises(ConfigError, msg=bad):
+                Config(**bad)
+        Config(gate_floor=0, timeout=10)
+
+    def test_load_names_path_for_list_type(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "config.toml"
+            path.write_text("extra_roots = [1]\n")
+            with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(path)}):
+                with self.assertRaises(ConfigError) as ctx:
+                    Config.load()
+            self.assertIn(str(path), str(ctx.exception))

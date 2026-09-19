@@ -31,7 +31,7 @@ def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
     """
     try:
         r = route_intent(intent, context, Path(cwd) if cwd else None)
-    except (MissingKeyError, ConfigError) as exc:
+    except (MissingKeyError, ConfigError, OSError) as exc:
         return {"error": str(exc), "outcome": "error"}
     out = asdict(r)
     out["ranked"] = out["ranked"][:6]
@@ -44,7 +44,7 @@ def list_skills(cwd: str = "") -> list[dict]:
     """Every skill the router can route to: name, harness, and description."""
     try:
         skills = roster(Config.load(), Path(cwd) if cwd else None)
-    except ConfigError as exc:
+    except (ConfigError, OSError) as exc:
         return [{"error": str(exc)}]
     return [{"name": s.name, "harness": s.harness, "description": s.description} for s in skills]
 

@@ -12,6 +12,7 @@ from pathlib import Path
 from . import client as client_mod
 from .client import KeyStoreError, MissingKeyError
 from .config import Config, ConfigError, config_path
+from .roster import to_json
 from .router import suggestion_block
 from .service import roster, route_intent
 
@@ -19,7 +20,7 @@ from .service import roster, route_intent
 def cmd_roster(args) -> int:
     skills = roster(Config.load(), Path.cwd())
     if args.json:
-        print(roster_mod.to_json(skills))
+        print(to_json(skills))
         return 0
     for s in skills:
         print(f"{s.name:<44} {s.harness:<20} {s.description[:70]}")

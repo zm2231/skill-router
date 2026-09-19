@@ -43,7 +43,9 @@ class Config:
         self.validate()
 
     def validate(self) -> None:
-        problems = []
+        problems = self._type_problems()
+        if problems:
+            raise ConfigError("; ".join(problems))
         if self.shortlist < 1:
             problems.append("shortlist must be at least 1")
         for name in ("gate_floor", "gate_threshold", "fits_threshold", "gray_fits_threshold"):
@@ -58,10 +60,24 @@ class Config:
         for name in ("wide_description_chars", "excerpt_chars", "intent_chars", "context_chars", "wide_chunk_chars"):
             if getattr(self, name) < 1:
                 problems.append(f"{name} must be at least 1")
-        if not self.model.strip():
-            problems.append("model must not be empty")
         if problems:
             raise ConfigError("; ".join(problems))
+
+    def _type_problems(self) -> list[str]:
+        problems: list[str] = []
+        if not isinstance(self.model, str) or not self.model.strip():
+            problems.append("model must be a non-empty string")
+        for name in ("extra_roots", "disabled_harnesses", "exclude"):
+            v = getattr(self, name)
+            if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
+                problems.append(f"{name} must be a list of strings")
+        for name in ("shortlist", "wide_description_chars", "excerpt_chars", "intent_chars", "context_chars", "wide_chunk_chars"):
+            if isinstance(getattr(self, name), bool) or not isinstance(getattr(self, name), int):
+                problems.append(f"{name} must be an integer")
+        for name in ("gate_floor", "gate_threshold", "fits_threshold", "gray_fits_threshold", "timeout", "hook_timeout", "hook_deadline"):
+            if isinstance(getattr(self, name), bool) or not isinstance(getattr(self, name), (int, float)):
+                problems.append(f"{name} must be a number")
+        return problems
 
     @classmethod
     def load(cls) -> "Config":
