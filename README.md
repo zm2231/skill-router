@@ -14,6 +14,12 @@ Two requests per intent, following TypeSafe's skill-suggestion cookbook:
 Three outcomes: `matched` (one skill name), `missing` (the request needs a skill and none
 installed covers it; the rerank has an explicit no-match option), and `none_needed`.
 
+## Tests
+
+```bash
+uv run python -m unittest discover -s tests
+```
+
 ## Setup
 
 ```bash
@@ -48,6 +54,9 @@ gate_floor = 0.12          # below: none_needed without a second request
 gate_threshold = 0.30      # above: the request needs a skill; below: gray zone
 fits_threshold = 0.30      # required fit when the gate says a skill is needed
 gray_fits_threshold = 0.75 # required fit in the gray zone
+timeout = 30.0             # per request, CLI and MCP
+hook_timeout = 6.0         # per request inside the prompt hook
+wide_chunk_chars = 90000   # rosters larger than this are ranked in chunks, then leaders compete
 extra_roots = ["~/my-skills"]
 disabled_harnesses = ["codex"]
 exclude = ["zain-voice-v1"]
