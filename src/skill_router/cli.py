@@ -9,11 +9,13 @@ from pathlib import Path
 
 from . import client as client_mod
 from . import roster as roster_mod
-from .router import route, suggestion_block
+from .config import Config, config_path
+from .router import suggestion_block
+from .service import roster, route_intent
 
 
 def cmd_roster(args) -> int:
-    skills = roster_mod.discover(cwd=Path.cwd())
+    skills = roster(Config.load(), Path.cwd())
     if args.json:
         print(roster_mod.to_json(skills))
         return 0
@@ -24,9 +26,7 @@ def cmd_roster(args) -> int:
 
 
 def cmd_route(args) -> int:
-    skills = roster_mod.discover(cwd=Path.cwd())
-    with client_mod.make_client() as client:
-        r = route(client, skills, args.intent, args.context or "")
+    r = route_intent(args.intent, args.context or "", Path.cwd())
     if args.json:
         print(json.dumps(asdict(r), indent=1))
         return 0
@@ -35,10 +35,9 @@ def cmd_route(args) -> int:
         if block:
             print(block)
         return 0
-    verdict = r.winner or "(none)"
     print(f"intent: {r.intent}")
     print(f"gate {r.gate:.2f}  {r.reason}  model={r.model}  tokens={r.usage.get('input_tokens')}")
-    print(f"winner: {verdict}")
+    print(f"{r.outcome}: {r.winner or '-'}")
     for c in r.ranked[:6]:
         fits = f"fits {c.fits:.2f}" if c.fits is not None else ""
         print(f"  {c.probability:.3f}  {c.name:<40} {fits}")
@@ -63,9 +62,11 @@ def cmd_setup(args) -> int:
         print("empty key", file=sys.stderr)
         return 1
     client_mod.store_key(key)
-    with client_mod.make_client() as client:
-        models = [m.name for m in client.models.list().models] if hasattr(client.models, "list") else []
-    print(f"key stored in Keychain ({client_mod.KEYCHAIN_SERVICE}); models: {', '.join(models) or 'reachable'}")
+    cfg = Config.load()
+    with client_mod.make_client(cfg.model, cfg.timeout) as client:
+        names = [m.name for m in client.models.list().models]
+    print(f"key stored in Keychain ({client_mod.KEYCHAIN_SERVICE}); models: {', '.join(names)}")
+    print(f"config: {config_path()} ({'present' if config_path().is_file() else 'defaults'})")
     return 0
 
 

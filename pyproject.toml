@@ -13,6 +13,7 @@ dependencies = [
 [project.scripts]
 skill-router = "skill_router.cli:main"
 skill-router-mcp = "skill_router.mcp_server:main"
+skill-router-hook = "skill_router.hook:main"
 
 [build-system]
 requires = ["uv_build>=0.8.21,<0.9.0"]

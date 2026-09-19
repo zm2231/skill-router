@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import asdict, dataclass
 from pathlib import Path
@@ -59,27 +58,37 @@ def _plugin_skill_dirs(cache: Path) -> Iterator[tuple[str, Path]]:
         yield plugin, md
 
 
-def harness_sources(home: Path, cwd: Path | None) -> list[tuple[str, str | None, Path]]:
-    sources: list[tuple[str, str | None, Path]] = [
-        ("claude-code", None, home / ".claude" / "skills"),
-        ("codex", None, home / ".codex" / "skills"),
-        ("agents", None, home / ".agents" / "skills"),
-    ]
+def harness_sources(home: Path, cwd: Path | None, extra_roots: list[str]) -> list[tuple[str, Path]]:
+    sources: list[tuple[str, Path]] = []
     if cwd:
         for ancestor in [cwd, *cwd.parents]:
             project = ancestor / ".claude" / "skills"
             if project.is_dir():
-                sources.append(("project", None, project))
+                sources.append(("project", project))
                 break
+    sources += [
+        ("claude-code", home / ".claude" / "skills"),
+        ("codex", home / ".codex" / "skills"),
+        ("agents", home / ".agents" / "skills"),
+    ]
+    sources += [("extra", Path(r).expanduser()) for r in extra_roots]
     return sources
 
 
-def discover(home: Path | None = None, cwd: Path | None = None) -> list[Skill]:
+def discover(
+    home: Path | None = None,
+    cwd: Path | None = None,
+    extra_roots: list[str] | None = None,
+    disabled_harnesses: list[str] | None = None,
+    exclude: list[str] | None = None,
+) -> list[Skill]:
     home = home or Path.home()
+    disabled = set(disabled_harnesses or [])
+    excluded = set(exclude or [])
     seen: dict[str, Skill] = {}
 
     def add(name: str, harness: str, md: Path) -> None:
-        if name in seen:
+        if name in seen or name in excluded or harness in disabled:
             return
         fields, body = parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
         description = fields.get("description", "")
@@ -93,28 +102,12 @@ def discover(home: Path | None = None, cwd: Path | None = None) -> list[Skill]:
             body=body[:BODY_CHARS],
         )
 
-    for harness, _, root in harness_sources(home, cwd):
+    for harness, root in harness_sources(home, cwd, extra_roots or []):
         for md in _skill_dirs(root):
             add(md.parent.name, harness, md)
     for plugin, md in _plugin_skill_dirs(home / ".claude" / "plugins" / "cache"):
         add(f"{plugin}:{md.parent.name}", "claude-code-plugin", md)
     return sorted(seen.values(), key=lambda s: s.name)
-
-
-def cache_path() -> Path:
-    override = os.environ.get("SKILL_ROUTER_CACHE")
-    if override:
-        return Path(override)
-    return Path.home() / ".cache" / "skill-router" / "roster.json"
-
-
-def _fingerprint(skills: list[Skill]) -> str:
-    return json.dumps([(s.path, os.path.getmtime(s.path)) for s in skills])
-
-
-def load(home: Path | None = None, cwd: Path | None = None, refresh: bool = False) -> list[Skill]:
-    skills = discover(home, cwd)
-    return skills
 
 
 def to_json(skills: list[Skill]) -> str:

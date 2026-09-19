@@ -5,22 +5,24 @@ from dataclasses import dataclass, field
 
 from typesafe_sdk import Choice, Noul, TypeSafeClient
 
+from .config import Config
 from .roster import Skill
-
-SHORTLIST = 3
-WIDE_DESCRIPTION_CHARS = 320
-EXCERPT_CHARS = 700
-GATE_THRESHOLD = 0.30
-FITS_THRESHOLD = 0.30
 
 CHOICE_INSTRUCTIONS = (
     "Which of these skills, if any, is the right one to load to help with the "
     "user's latest request?"
 )
 RERANK_INSTRUCTIONS = (
-    "Exactly one of these skills is the right one to load for the user's latest "
-    "request. Which one? Read what each actually does, not just its name."
+    "Which of these skills is the right one to load for the user's latest request? "
+    "Read what each actually does, not just its name. Pick the no-match option when "
+    "none of them does the specific thing asked, even if one is topically nearby."
 )
+NO_MATCH = "none-of-these"
+NO_MATCH_CRITERIA = (
+    "None of these skills does what the request asks for. The specific tool, service, "
+    "format, or workflow the user needs is not covered by any of them."
+)
+
 GATE_QUESTIONS = {
     "acts_on_user_system": (
         "Is the assistant being asked to act on the user's files, accounts, devices, "
@@ -45,6 +47,11 @@ class Candidate:
     fits: float | None = None
 
 
+MATCHED = "matched"
+MISSING = "missing"
+NONE_NEEDED = "none_needed"
+
+
 @dataclass
 class Route:
     intent: str
@@ -52,39 +59,34 @@ class Route:
     gate_values: dict[str, float]
     ranked: list[Candidate]
     winner: str | None
+    outcome: str
     reason: str
     usage: dict[str, int] = field(default_factory=dict)
     model: str = ""
 
-    @property
-    def shortlist(self) -> list[Candidate]:
-        return self.ranked[:SHORTLIST]
 
 
 def _state(intent: str, context: str) -> dict:
     return {"request": intent, "recent_context": context}
 
 
-def rank_wide(client: TypeSafeClient, skills: list[Skill], intent: str, context: str):
+def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str):
     questions = {
         "which": Choice(
             instructions=CHOICE_INSTRUCTIONS,
-            criteria={s.name: s.description[:WIDE_DESCRIPTION_CHARS] for s in skills},
+            criteria={s.name: s.description[:cfg.wide_description_chars] for s in skills},
         )
     }
     for key, text in GATE_QUESTIONS.items():
         questions[f"gate::{key}"] = Noul(instructions=text)
-    return client.system_one(state=_state(intent, context), questions=questions)
+    return client.system_one(state=_state(intent, context), questions=questions, model=cfg.model)
 
 
-def rerank(client: TypeSafeClient, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
+def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
+    criteria = {n: f"{by_name[n].description} — {by_name[n].body[:cfg.excerpt_chars]}" for n in names}
+    criteria[NO_MATCH] = NO_MATCH_CRITERIA
     questions = {
-        "which": Choice(
-            instructions=RERANK_INSTRUCTIONS,
-            criteria={
-                n: f"{by_name[n].description} — {by_name[n].body[:EXCERPT_CHARS]}" for n in names
-            },
-        )
+        "which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria),
     }
     for n in names:
         questions[f"fits::{n}"] = Noul(
@@ -93,12 +95,14 @@ def rerank(client: TypeSafeClient, by_name: dict[str, Skill], names: list[str], 
                 f"for? It is described as: {by_name[n].description}"
             )
         )
-    return client.system_one(state=_state(intent, context), questions=questions)
+    return client.system_one(state=_state(intent, context), questions=questions, model=cfg.model)
 
 
-def route(client: TypeSafeClient, skills: list[Skill], intent: str, context: str = "") -> Route:
+def route(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str = "") -> Route:
+    if not skills:
+        return Route(intent, 0.0, {}, [], None, MISSING, "roster: no skills discovered")
     by_name = {s.name: s for s in skills}
-    wide = rank_wide(client, skills, intent, context)
+    wide = rank_wide(client, cfg, skills, intent, context)
     probs = wide.answers["which"].probabilities
     ranked = [Candidate(n, p) for n, p in sorted(probs.items(), key=lambda kv: -kv[1])][:12]
     values = {
@@ -108,28 +112,43 @@ def route(client: TypeSafeClient, skills: list[Skill], intent: str, context: str
     gate = sum(oriented) / len(oriented)
     usage = {"input_tokens": wide.usage.input_tokens or 0, "output_tokens": wide.usage.output_tokens or 0}
 
-    if gate < GATE_THRESHOLD:
-        return Route(intent, gate, values, ranked, None, "gate: request does not need a skill", usage, wide.model)
+    if gate < cfg.gate_floor:
+        return Route(intent, gate, values, ranked, None, NONE_NEEDED,
+                     "gate: request does not need a skill", usage, wide.model)
+    needs_skill = gate >= cfg.gate_threshold
+    required_fit = cfg.fits_threshold if needs_skill else cfg.gray_fits_threshold
 
-    names = [c.name for c in ranked[:SHORTLIST]]
-    second = rerank(client, by_name, names, intent, context)
+    names = [c.name for c in ranked[:cfg.shortlist]]
+    second = rerank(client, cfg, by_name, names, intent, context)
     usage["input_tokens"] += second.usage.input_tokens or 0
     usage["output_tokens"] += second.usage.output_tokens or 0
     fits = {k.removeprefix("fits::"): a.noul for k, a in second.answers.items() if k.startswith("fits::")}
-    for c in ranked[:SHORTLIST]:
+    for c in ranked[:cfg.shortlist]:
         c.fits = fits.get(c.name)
     winner = second.answers["which"].choice
-    if max(fits.values()) < FITS_THRESHOLD:
-        return Route(intent, gate, values, ranked, None, "fits: no shortlisted skill does this", usage, wide.model)
-    return Route(intent, gate, values, ranked, winner, "rerank winner", usage, wide.model)
+    if winner == NO_MATCH or fits.get(winner, 0.0) < required_fit:
+        best = max(fits, key=fits.get)
+        why = ("no-match chosen" if winner == NO_MATCH
+               else f"winner {winner} fits {fits.get(winner, 0.0):.2f} under {required_fit:.2f}")
+        outcome = MISSING if needs_skill else NONE_NEEDED
+        return Route(intent, gate, values, ranked, None, outcome,
+                     f"{why}; nearest {best} at {fits[best]:.2f}", usage, wide.model)
+    return Route(intent, gate, values, ranked, winner, MATCHED, "rerank winner", usage, wide.model)
 
 
 def suggestion_block(r: Route) -> str:
-    if not r.winner:
+    if r.outcome == MATCHED:
+        body = (
+            f"Relevant to the current request: {r.winner}. Load it with the Skill tool before "
+            "proceeding. Ignore this if it does not fit what the user actually asked for."
+        )
+    elif r.outcome == MISSING:
+        nearest = ", ".join(c.name for c in r.ranked[:3])
+        body = (
+            "No installed skill covers this request, though it looks like one would help. "
+            f"Nearest installed: {nearest}. Proceed without a skill and tell the user a skill "
+            "for this is probably worth installing or creating."
+        )
+    else:
         return ""
-    return (
-        "<skill_relevance>\n"
-        f"Relevant to the current request: {r.winner}. Load it with the Skill tool before "
-        "proceeding. Ignore this if it does not fit what the user actually asked for.\n"
-        "</skill_relevance>"
-    )
+    return f"<skill_relevance>\n{body}\n</skill_relevance>"

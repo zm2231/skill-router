@@ -7,7 +7,6 @@ import subprocess
 from typesafe_sdk import TypeSafeClient
 
 KEYCHAIN_SERVICE = "typesafe-api-key"
-DEFAULT_MODEL = "jev-latest"
 
 
 def keychain_key() -> str | None:
@@ -42,9 +41,5 @@ def store_key(key: str) -> None:
     )
 
 
-def make_client(timeout: float = 30.0) -> TypeSafeClient:
-    return TypeSafeClient(
-        api_key=api_key(),
-        model=os.environ.get("TYPESAFE_DEFAULT_MODEL", DEFAULT_MODEL),
-        timeout=timeout,
-    )
+def make_client(model: str, timeout: float) -> TypeSafeClient:
+    return TypeSafeClient(api_key=api_key(), model=model, timeout=timeout)
