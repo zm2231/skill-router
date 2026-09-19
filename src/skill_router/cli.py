@@ -9,7 +9,7 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from typesafe_sdk import TypeSafeError
+from typesafe_sdk import TypeSafeAuthenticationError, TypeSafeError, TypeSafePermissionDeniedError
 
 from . import client as client_mod
 from .client import KeyStoreError, MissingKeyError
@@ -71,7 +71,7 @@ def cmd_setup(args) -> int:
     cfg = Config.load()
     try:
         names = client_mod.verify_key(key, cfg.model, cfg.timeout)
-    except Exception as exc:
+    except (TypeSafeAuthenticationError, TypeSafePermissionDeniedError) as exc:
         print(f"key rejected, nothing stored: {exc}", file=sys.stderr)
         return 1
     where = client_mod.store_key(key)

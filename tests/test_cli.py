@@ -46,3 +46,15 @@ class RosterCommandTests(unittest.TestCase):
             self.assertEqual(cli.main(["route", "do a thing"]), 3)
         self.assertIn("typesafe:", err.getvalue())
         self.assertNotIn("Traceback", err.getvalue())
+
+    def test_setup_separates_rejected_key_from_outage(self):
+        from typesafe_sdk import TypeSafeAPIConnectionError, TypeSafeAuthenticationError
+        cases = [(TypeSafeAuthenticationError("bad key"), 1, "rejected"), (TypeSafeAPIConnectionError("refused"), 3, "typesafe:")]
+        for exc, code, text in cases:
+            err = io.StringIO()
+            with mock.patch.object(cli.client_mod, "verify_key", side_effect=exc), \
+                 mock.patch.object(cli.client_mod, "store_key") as store, \
+                 mock.patch("sys.stderr", err):
+                self.assertEqual(cli.main(["setup", "--key", "k"]), code)
+            self.assertIn(text, err.getvalue())
+            store.assert_not_called()
