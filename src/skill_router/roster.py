@@ -22,7 +22,7 @@ def fit_json(text: str, limit: int) -> str:
     """The longest prefix of text whose JSON-encoded form fits in limit chars."""
     text = text[:limit]
     while text and json_len(text) > limit:
-        text = text[: len(text) - max(1, (json_len(text) - limit) // 6)]
+        text = text[: len(text) - max(1, (json_len(text) - limit) // 12)]
     return text
 
 

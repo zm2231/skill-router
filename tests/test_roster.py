@@ -75,7 +75,8 @@ class DiscoverTests(unittest.TestCase):
 
     def test_fit_json_bounds_escaped_text(self):
         from skill_router.roster import fit_json, json_len
-        for text in ('"\n\t' * 40, "\\" * 100, "plain " * 30, "\u0001" * 50, ""):
+        self.assertEqual(fit_json("\U0001F600" * 100, 13), "\U0001F600")
+        for text in ('"\n\t' * 40, "\\" * 100, "plain " * 30, "\u0001" * 50, "\U0001F600" * 40, "a\U0001F600\u0001" * 20, ""):
             for limit in (0, 1, 7, 50, 1000):
                 out = fit_json(text, limit)
                 self.assertLessEqual(json_len(out), limit)
