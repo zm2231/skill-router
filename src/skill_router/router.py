@@ -1,27 +1,14 @@
 """Two Jev requests per intent: rank every skill and gate, then rerank the shortlist and verify."""
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from typesafe_sdk import Choice, Noul, TypeSafeClient
 
 from .config import Config
-from .roster import Skill
-
-CHOICE_INSTRUCTIONS = (
-    "Which of these skills, if any, is the right one to load to help with the "
-    "user's latest request?"
-)
-RERANK_INSTRUCTIONS = (
-    "Which of these skills is the right one to load for the user's latest request? "
-    "Read what each actually does, not just its name. Pick the no-match option when "
-    "none of them does the specific thing asked, even if one is topically nearby."
-)
-NO_MATCH = "none-of-these"
-NO_MATCH_CRITERIA = (
-    "None of these skills does what the request asks for. The specific tool, service, "
-    "format, or workflow the user needs is not covered by any of them."
-)
+from .prompts import CHOICE_INSTRUCTIONS, NO_MATCH, NO_MATCH_CRITERIA, RERANK_INSTRUCTIONS
+from .roster import Skill, fit_json
 
 GATE_QUESTIONS = {
     "acts_on_user_system": (
@@ -70,9 +57,18 @@ def _state(cfg: Config, intent: str, context: str) -> dict:
     return {"request": intent[:cfg.intent_chars], "recent_context": context[:cfg.context_chars]}
 
 
+def choice_size(question: Choice) -> int:
+    """Serialized size of one Choice question, the quantity choice_chars bounds."""
+    return len(json.dumps(question.model_dump()))
+
+
+def _wide_text(cfg: Config, s: Skill) -> str:
+    return fit_json(s.description, cfg.wide_description_chars)
+
+
 def _cost(cfg: Config, s: Skill) -> int:
-    """Chars one roster entry adds to a Choice; never above cfg.max_entry_chars."""
-    return len(s.name) + min(len(s.description), cfg.wide_description_chars) + 8
+    """Serialized chars one roster entry adds to the wide Choice; never above cfg.max_entry_chars."""
+    return len(json.dumps(s.name)) + len(json.dumps(_wide_text(cfg, s))) + 4
 
 
 def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
@@ -81,7 +77,7 @@ def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
     size = 0
     for s in skills:
         cost = _cost(cfg, s)
-        if chunks[-1] and size + cost > cfg.choice_chars:
+        if chunks[-1] and size + cost > cfg.wide_capacity:
             chunks.append([])
             size = 0
         chunks[-1].append(s)
@@ -98,7 +94,7 @@ def _wide_questions(cfg: Config, skills: list[Skill], with_gate: bool) -> dict:
     questions = {
         "which": Choice(
             instructions=CHOICE_INSTRUCTIONS,
-            criteria={s.name: s.description[:cfg.wide_description_chars] for s in skills},
+            criteria={s.name: _wide_text(cfg, s) for s in skills},
         )
     }
     if with_gate:
@@ -156,10 +152,8 @@ def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: 
 
 
 def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
-    criteria = {
-        n: f"{by_name[n].description[:cfg.rerank_description_chars]}. {by_name[n].body[:cfg.excerpt_chars]}"
-        for n in names
-    }
+    described = {n: fit_json(by_name[n].description, cfg.rerank_description_chars) for n in names}
+    criteria = {n: f"{described[n]}. {fit_json(by_name[n].body, cfg.excerpt_chars)}" for n in names}
     criteria[NO_MATCH] = NO_MATCH_CRITERIA
     questions = {
         "which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria),
@@ -168,7 +162,7 @@ def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names
         questions[f"fits::{n}"] = Noul(
             instructions=(
                 f"Does the skill '{n}' do the specific thing the user's request asks "
-                f"for? It is described as: {by_name[n].description[:cfg.rerank_description_chars]}"
+                f"for? It is described as: {described[n]}"
             )
         )
     return client.system_one(state=_state(cfg, intent, context), questions=questions, model=cfg.model)

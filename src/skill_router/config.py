@@ -1,16 +1,21 @@
 """Runtime configuration: harness roots, thresholds, model. Read from a TOML file, overridable by env."""
 from __future__ import annotations
 
+import json
 import math
 import os
 import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .prompts import CHOICE_INSTRUCTIONS, NO_MATCH, NO_MATCH_CRITERIA, RERANK_INSTRUCTIONS
 from .roster import BODY_CHARS, NAME_CHARS
 
 HOOK_CEILING = 18.0
-RERANK_OVERHEAD = 400
+WIDE_OVERHEAD = len(json.dumps({"type": "choice", "instructions": CHOICE_INSTRUCTIONS, "criteria": {}}))
+RERANK_OVERHEAD = 2 + len(json.dumps(
+    {"type": "choice", "instructions": RERANK_INSTRUCTIONS, "criteria": {NO_MATCH: NO_MATCH_CRITERIA}}
+))
 
 
 class ConfigError(ValueError):
@@ -51,7 +56,13 @@ class Config:
 
     @property
     def max_entry_chars(self) -> int:
+        """Serialized chars one roster entry can add to the wide Choice."""
         return NAME_CHARS + self.wide_description_chars + 8
+
+    @property
+    def wide_capacity(self) -> int:
+        """Chars left for roster entries in one wide Choice after the fixed text."""
+        return self.choice_chars - WIDE_OVERHEAD
 
     @property
     def max_rerank_chars(self) -> int:
@@ -69,9 +80,9 @@ class Config:
             v = getattr(self, name)
             if not 0.0 <= v <= 1.0:
                 problems.append(f"{name} must be between 0 and 1")
-        if self.choice_chars < 2 * self.max_entry_chars:
+        if self.wide_capacity < 2 * self.max_entry_chars:
             problems.append(
-                f"choice_chars must fit at least two entries: 2 * ({NAME_CHARS} + wide_description_chars + 8)"
+                f"choice_chars must fit at least two entries: {WIDE_OVERHEAD} + 2 * ({NAME_CHARS} + wide_description_chars + 8)"
             )
         if self.max_rerank_chars > self.choice_chars:
             problems.append(

@@ -38,6 +38,28 @@ class RosterCommandTests(unittest.TestCase):
                     self.assertEqual(cli.main(["roster"]), 2)
                 self.assertIn("exclude", err.getvalue())
 
+    def test_closed_stdout_exits_0_for_every_output_mode(self):
+        class Closed(io.StringIO):
+            def write(self, s):
+                raise BrokenPipeError(32, "Broken pipe")
+
+        with tempfile.TemporaryDirectory() as d:
+            home = Path(d)
+            skill = home / ".claude" / "skills" / "one"
+            skill.mkdir(parents=True)
+            (skill / "SKILL.md").write_text("---\nname: one\ndescription: does one thing\n---\nbody")
+            from skill_router.router import MATCHED, Route
+            fake = Route("x", 0.9, {}, [], "one", MATCHED, "")
+            for argv in (["roster"], ["roster", "--json"], ["route", "x", "--json"], ["route", "x", "--block"]):
+                err = io.StringIO()
+                with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(home / "none.toml")}), \
+                     mock.patch("pathlib.Path.home", return_value=home), \
+                     mock.patch.object(cli, "route_intent", return_value=fake), \
+                     mock.patch.object(cli, "suggestion_block", return_value="block"), \
+                     mock.patch("sys.stdout", Closed()), mock.patch("sys.stderr", err):
+                    self.assertEqual(cli.main(argv), 0, argv)
+                self.assertEqual(err.getvalue(), "", argv)
+
     def test_unreadable_config_exits_2(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "c.toml"

@@ -86,18 +86,18 @@ def main(argv=None) -> int:
     except (MissingKeyError, ConfigError, KeyStoreError) as exc:
         print(exc, file=sys.stderr)
         return 2
-    except TypeSafeError as exc:
-        print(f"typesafe: {exc}", file=sys.stderr)
-        return 3
-    except OSError as exc:
-        print(f"skill-router: {exc}", file=sys.stderr)
-        return 2
     except BrokenPipeError:
         try:
             sys.stdout.close()
         except OSError:
             pass
         return 0
+    except TypeSafeError as exc:
+        print(f"typesafe: {exc}", file=sys.stderr)
+        return 3
+    except OSError as exc:
+        print(f"skill-router: {exc}", file=sys.stderr)
+        return 2
 
 
 def _main(argv=None) -> int:

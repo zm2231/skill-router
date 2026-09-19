@@ -13,6 +13,19 @@ BODY_CHARS = 1600
 NAME_CHARS = 128
 
 
+def json_len(text: str) -> int:
+    """Chars the text occupies inside a JSON string, quotes excluded."""
+    return len(json.dumps(text)) - 2
+
+
+def fit_json(text: str, limit: int) -> str:
+    """The longest prefix of text whose JSON-encoded form fits in limit chars."""
+    text = text[:limit]
+    while text and json_len(text) > limit:
+        text = text[: len(text) - max(1, (json_len(text) - limit) // 6)]
+    return text
+
+
 @dataclass(frozen=True)
 class Skill:
     name: str
@@ -89,7 +102,7 @@ def discover(
     seen: dict[str, Skill] = {}
 
     def add(name: str, harness: str, md: Path) -> None:
-        if name in seen or name in excluded or harness in disabled or len(name) > NAME_CHARS:
+        if name in seen or name in excluded or harness in disabled or json_len(name) > NAME_CHARS:
             return
         try:
             text = md.read_text(encoding="utf-8", errors="replace")

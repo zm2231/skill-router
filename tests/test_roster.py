@@ -73,6 +73,16 @@ class DiscoverTests(unittest.TestCase):
         dangling.symlink_to(self.home / "nowhere")
         self.assertEqual([s.name for s in discover(self.home, None)], ["good"])
 
+    def test_fit_json_bounds_escaped_text(self):
+        from skill_router.roster import fit_json, json_len
+        for text in ('"\n\t' * 40, "\\" * 100, "plain " * 30, "\u0001" * 50, ""):
+            for limit in (0, 1, 7, 50, 1000):
+                out = fit_json(text, limit)
+                self.assertLessEqual(json_len(out), limit)
+                self.assertTrue(text.startswith(out))
+                if len(out) < len(text):
+                    self.assertGreater(json_len(text[: len(out) + 1]), limit)
+
     def test_overlong_names_are_skipped(self):
         from skill_router.roster import NAME_CHARS
         self.write(f".claude/skills/{'a' * NAME_CHARS}")
