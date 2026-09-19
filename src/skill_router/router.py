@@ -83,7 +83,7 @@ def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: 
 
 
 def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
-    criteria = {n: f"{by_name[n].description} — {by_name[n].body[:cfg.excerpt_chars]}" for n in names}
+    criteria = {n: f"{by_name[n].description}. {by_name[n].body[:cfg.excerpt_chars]}" for n in names}
     criteria[NO_MATCH] = NO_MATCH_CRITERIA
     questions = {
         "which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria),
