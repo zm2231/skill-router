@@ -12,7 +12,8 @@ from skill_router.config import Config, ConfigError
 class ConfigTests(unittest.TestCase):
     def test_bounds(self):
         for bad in (dict(shortlist=0), dict(gate_floor=0.5, gate_threshold=0.3), dict(fits_threshold=1.5),
-                    dict(timeout=0), dict(hook_deadline=-1), dict(wide_chunk_chars=0), dict(model=" ")):
+                    dict(timeout=0), dict(hook_deadline=-1), dict(hook_deadline=20), dict(hook_timeout=10, hook_deadline=8),
+                    dict(wide_chunk_chars=0), dict(model=" ")):
             with self.assertRaises(ConfigError, msg=bad):
                 Config(**bad)
 

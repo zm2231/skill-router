@@ -91,7 +91,11 @@ def discover(
     def add(name: str, harness: str, md: Path) -> None:
         if name in seen or name in excluded or harness in disabled or len(name) > NAME_CHARS:
             return
-        fields, body = parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
+        try:
+            text = md.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            return
+        fields, body = parse_skill_md(text)
         description = fields.get("description", "")
         if not description:
             description = " ".join(re.sub(r"^#+\s*", "", body[:400], flags=re.MULTILINE).split())[:200]

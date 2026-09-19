@@ -3,7 +3,8 @@
 Routes an agent's intent to the one installed skill that fits, across harnesses, using
 TypeSafe's Jev (a System One model that returns calibrated probabilities instead of text).
 
-Two requests per intent, following TypeSafe's skill-suggestion cookbook:
+Two requests per intent for a roster that fits one chunk, following TypeSafe's skill-suggestion
+cookbook (rosters above `wide_chunk_chars` add one request per chunk plus reduction rounds):
 
 1. Rank every skill on the roster with a Choice question, and gate with three Nouls that ask
    whether the request needs a skill at all.
@@ -43,7 +44,8 @@ uv run skill-router route "turn this podcast into a labeled transcript"
 - CLI: `skill-router route "<intent>" [--json | --block]`
 - MCP: `skill-router-mcp` (stdio) exposes `route_skill(intent, context, cwd)` and `list_skills(cwd)`.
 - Claude Code hook: `skill-router-hook` reads the `UserPromptSubmit` payload and prints a
-  `<skill_relevance>` block; wire it in `settings.json` under `hooks.UserPromptSubmit`.
+  `<skill_relevance>` block; wire it in `settings.json` under `hooks.UserPromptSubmit` with
+  `"timeout": 20`.
 
 ## Config
 
@@ -58,8 +60,9 @@ gate_threshold = 0.30      # above: the request needs a skill; below: gray zone
 fits_threshold = 0.30      # required fit when the gate says a skill is needed
 gray_fits_threshold = 0.75 # required fit in the gray zone
 timeout = 30.0             # per request, CLI and MCP
-hook_timeout = 6.0         # per request inside the prompt hook, no retries
-hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 past this
+hook_timeout = 6.0         # per request inside the prompt hook, no retries; at most hook_deadline
+hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 past this; max 18,
+                           # because the settings.json hook entry runs with timeout 20
 intent_chars = 4000        # inputs are truncated to these before they are sent
 context_chars = 4000
 wide_chunk_chars = 90000   # rosters larger than this are ranked in chunks, then leaders compete;

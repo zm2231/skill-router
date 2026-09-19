@@ -66,6 +66,13 @@ class DiscoverTests(unittest.TestCase):
         self.assertNotIn("skip", found)
         self.assertEqual(discover(self.home, None, disabled_harnesses=["claude-code"]), [])
 
+    def test_unreadable_skill_is_skipped(self):
+        self.write(".claude/skills/good")
+        dangling = self.home / ".claude/skills/gone/SKILL.md"
+        dangling.parent.mkdir(parents=True)
+        dangling.symlink_to(self.home / "nowhere")
+        self.assertEqual([s.name for s in discover(self.home, None)], ["good"])
+
     def test_overlong_names_are_skipped(self):
         from skill_router.roster import NAME_CHARS
         self.write(f".claude/skills/{'a' * NAME_CHARS}")

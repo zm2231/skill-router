@@ -9,6 +9,8 @@ from pathlib import Path
 
 from .roster import NAME_CHARS
 
+HOOK_CEILING = 18.0
+
 
 class ConfigError(ValueError):
     pass
@@ -68,6 +70,10 @@ class Config:
         for name in ("timeout", "hook_timeout", "hook_deadline"):
             if getattr(self, name) <= 0:
                 problems.append(f"{name} must be positive")
+        if self.hook_deadline > HOOK_CEILING:
+            problems.append(f"hook_deadline must not exceed {HOOK_CEILING:g}; the installed hook is killed at 20s")
+        if self.hook_timeout > self.hook_deadline:
+            problems.append("hook_timeout must not exceed hook_deadline")
         for name in ("wide_description_chars", "excerpt_chars", "intent_chars", "context_chars", "wide_chunk_chars"):
             if getattr(self, name) < 1:
                 problems.append(f"{name} must be at least 1")
