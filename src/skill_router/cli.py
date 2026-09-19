@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
+import shutil
 import subprocess
 import sys
 from dataclasses import asdict
 from pathlib import Path
 
 from . import client as client_mod
+from .client import MissingKeyError
 from . import roster as roster_mod
 from .config import Config, config_path
 from .router import suggestion_block
@@ -46,7 +49,7 @@ def cmd_route(args) -> int:
 
 def cmd_setup(args) -> int:
     key = args.key
-    if not key:
+    if not key and shutil.which("osascript"):
         try:
             out = subprocess.run(
                 ["osascript",
@@ -58,6 +61,8 @@ def cmd_setup(args) -> int:
             print("cancelled", file=sys.stderr)
             return 1
         key = out.stdout.strip()
+    elif not key:
+        key = getpass.getpass("TypeSafe API key: ").strip()
     if not key:
         print("empty key", file=sys.stderr)
         return 1
@@ -71,6 +76,14 @@ def cmd_setup(args) -> int:
 
 
 def main(argv=None) -> int:
+    try:
+        return _main(argv)
+    except MissingKeyError as exc:
+        print(exc, file=sys.stderr)
+        return 2
+
+
+def _main(argv=None) -> int:
     p = argparse.ArgumentParser(prog="skill-router")
     sub = p.add_subparsers(dest="cmd", required=True)
 

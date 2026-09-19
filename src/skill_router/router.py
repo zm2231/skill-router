@@ -70,16 +70,75 @@ def _state(intent: str, context: str) -> dict:
     return {"request": intent, "recent_context": context}
 
 
-def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str):
+def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
+    """Split the roster so one Choice never exceeds the per-question budget."""
+    chunks: list[list[Skill]] = [[]]
+    size = 0
+    for s in skills:
+        cost = len(s.name) + min(len(s.description), cfg.wide_description_chars) + 8
+        if chunks[-1] and size + cost > cfg.wide_chunk_chars:
+            chunks.append([])
+            size = 0
+        chunks[-1].append(s)
+        size += cost
+    return chunks
+
+
+def _wide_questions(cfg: Config, skills: list[Skill], with_gate: bool) -> dict:
     questions = {
         "which": Choice(
             instructions=CHOICE_INSTRUCTIONS,
             criteria={s.name: s.description[:cfg.wide_description_chars] for s in skills},
         )
     }
-    for key, text in GATE_QUESTIONS.items():
-        questions[f"gate::{key}"] = Noul(instructions=text)
-    return client.system_one(state=_state(intent, context), questions=questions, model=cfg.model)
+    if with_gate:
+        for key, text in GATE_QUESTIONS.items():
+            questions[f"gate::{key}"] = Noul(instructions=text)
+    return questions
+
+
+@dataclass
+class Wide:
+    probabilities: dict[str, float]
+    gate_values: dict[str, float]
+    model: str
+    input_tokens: int
+    output_tokens: int
+
+
+def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str) -> Wide:
+    """Rank every skill and gate the request. Large rosters are ranked chunk by chunk, then the
+    per-chunk leaders compete once more; the gate rides on the first chunk."""
+    state = _state(intent, context)
+    chunks = _chunks(cfg, skills)
+    responses = [
+        client.system_one(state=state, questions=_wide_questions(cfg, chunk, i == 0), model=cfg.model)
+        for i, chunk in enumerate(chunks)
+    ]
+    first = responses[0]
+    gate_values = {
+        k.removeprefix("gate::"): a.noul for k, a in first.answers.items() if k.startswith("gate::")
+    }
+    if len(responses) > 1:
+        by_name = {s.name: s for s in skills}
+        leaders: list[str] = []
+        for r in responses:
+            probs = r.answers["which"].probabilities
+            leaders += [n for n, _ in sorted(probs.items(), key=lambda kv: -kv[1])[:cfg.shortlist]]
+        final = client.system_one(
+            state=state, questions=_wide_questions(cfg, [by_name[n] for n in leaders], False), model=cfg.model
+        )
+        responses.append(final)
+        probabilities = final.answers["which"].probabilities
+    else:
+        probabilities = first.answers["which"].probabilities
+    return Wide(
+        probabilities=probabilities,
+        gate_values=gate_values,
+        model=first.model,
+        input_tokens=sum((r.usage.input_tokens or 0) for r in responses),
+        output_tokens=sum((r.usage.output_tokens or 0) for r in responses),
+    )
 
 
 def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
@@ -103,14 +162,12 @@ def route(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str,
         return Route(intent, 0.0, {}, [], None, MISSING, "roster: no skills discovered")
     by_name = {s.name: s for s in skills}
     wide = rank_wide(client, cfg, skills, intent, context)
-    probs = wide.answers["which"].probabilities
-    ranked = [Candidate(n, p) for n, p in sorted(probs.items(), key=lambda kv: -kv[1])][:12]
-    values = {
-        k.removeprefix("gate::"): a.noul for k, a in wide.answers.items() if k.startswith("gate::")
-    }
+    ranked = [Candidate(n, p) for n, p in sorted(wide.probabilities.items(), key=lambda kv: -kv[1])]
+    ranked = ranked[:max(12, cfg.shortlist)]
+    values = wide.gate_values
     oriented = [(1.0 - v) if k in INVERTED else v for k, v in values.items()]
     gate = sum(oriented) / len(oriented)
-    usage = {"input_tokens": wide.usage.input_tokens or 0, "output_tokens": wide.usage.output_tokens or 0}
+    usage = {"input_tokens": wide.input_tokens, "output_tokens": wide.output_tokens}
 
     if gate < cfg.gate_floor:
         return Route(intent, gate, values, ranked, None, NONE_NEEDED,
@@ -119,6 +176,8 @@ def route(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str,
     required_fit = cfg.fits_threshold if needs_skill else cfg.gray_fits_threshold
 
     names = [c.name for c in ranked[:cfg.shortlist]]
+    if not names:
+        return Route(intent, gate, values, ranked, None, MISSING, "roster: nothing to shortlist", usage, wide.model)
     second = rerank(client, cfg, by_name, names, intent, context)
     usage["input_tokens"] += second.usage.input_tokens or 0
     usage["output_tokens"] += second.usage.output_tokens or 0

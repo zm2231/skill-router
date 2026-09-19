@@ -26,6 +26,8 @@ class Config:
     wide_description_chars: int = 320
     excerpt_chars: int = 700
     timeout: float = 30.0
+    hook_timeout: float = 6.0
+    wide_chunk_chars: int = 90_000
     extra_roots: list[str] = field(default_factory=list)
     disabled_harnesses: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)

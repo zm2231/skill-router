@@ -6,6 +6,7 @@ from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
 
+from .client import MissingKeyError
 from .config import Config
 from .router import suggestion_block
 from .service import roster, route_intent
@@ -28,7 +29,10 @@ def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
     context: optional recent conversation or task context that sharpens the intent.
     cwd: optional working directory, so project-local skills are included.
     """
-    r = route_intent(intent, context, Path(cwd) if cwd else None)
+    try:
+        r = route_intent(intent, context, Path(cwd) if cwd else None)
+    except MissingKeyError as exc:
+        return {"error": str(exc), "outcome": "error"}
     out = asdict(r)
     out["ranked"] = out["ranked"][:6]
     out["suggestion"] = suggestion_block(r)

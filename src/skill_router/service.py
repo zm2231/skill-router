@@ -18,8 +18,14 @@ def roster(cfg: Config, cwd: Path | None) -> list[Skill]:
     )
 
 
-def route_intent(intent: str, context: str = "", cwd: Path | None = None, cfg: Config | None = None) -> Route:
+def route_intent(
+    intent: str,
+    context: str = "",
+    cwd: Path | None = None,
+    cfg: Config | None = None,
+    timeout: float | None = None,
+) -> Route:
     cfg = cfg or Config.load()
     skills = roster(cfg, cwd)
-    with make_client(cfg.model, cfg.timeout) as client:
+    with make_client(cfg.model, timeout or cfg.timeout) as client:
         return route(client, cfg, skills, intent, context)

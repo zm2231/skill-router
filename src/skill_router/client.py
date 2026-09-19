@@ -9,6 +9,10 @@ from typesafe_sdk import TypeSafeClient
 KEYCHAIN_SERVICE = "typesafe-api-key"
 
 
+class MissingKeyError(RuntimeError):
+    pass
+
+
 def keychain_key() -> str | None:
     try:
         out = subprocess.run(
@@ -23,9 +27,7 @@ def keychain_key() -> str | None:
 def api_key() -> str:
     key = os.environ.get("TYPESAFE_API_KEY", "").strip() or keychain_key()
     if not key:
-        raise SystemExit(
-            "no TypeSafe API key: run `skill-router setup` or set TYPESAFE_API_KEY"
-        )
+        raise MissingKeyError("no TypeSafe API key: run `skill-router setup` or set TYPESAFE_API_KEY")
     return key
 
 
