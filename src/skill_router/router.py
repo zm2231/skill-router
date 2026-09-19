@@ -70,18 +70,27 @@ def _state(cfg: Config, intent: str, context: str) -> dict:
     return {"request": intent[:cfg.intent_chars], "recent_context": context[:cfg.context_chars]}
 
 
+def _cost(cfg: Config, s: Skill) -> int:
+    return len(s.name) + min(len(s.description), cfg.wide_description_chars) + 8
+
+
 def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
     """Split the roster so one Choice never exceeds the per-question budget."""
     chunks: list[list[Skill]] = [[]]
     size = 0
     for s in skills:
-        cost = len(s.name) + min(len(s.description), cfg.wide_description_chars) + 8
+        cost = _cost(cfg, s)
         if chunks[-1] and size + cost > cfg.wide_chunk_chars:
             chunks.append([])
             size = 0
         chunks[-1].append(s)
         size += cost
     return chunks
+
+
+def _top(cfg: Config, by_name: dict[str, Skill], response, keep: int) -> list[Skill]:
+    probs = response.answers["which"].probabilities
+    return [by_name[n] for n, _ in sorted(probs.items(), key=lambda kv: -kv[1])[:keep]]
 
 
 def _wide_questions(cfg: Config, skills: list[Skill], with_gate: bool) -> dict:
@@ -115,29 +124,33 @@ def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: 
         client.system_one(state=state, questions=_wide_questions(cfg, chunk, i == 0), model=cfg.model)
         for i, chunk in enumerate(chunks)
     ]
+    all_responses = list(responses)
     first = responses[0]
     gate_values = {
         k.removeprefix("gate::"): a.noul for k, a in first.answers.items() if k.startswith("gate::")
     }
-    if len(responses) > 1:
-        by_name = {s.name: s for s in skills}
-        leaders: list[str] = []
-        for r in responses:
-            probs = r.answers["which"].probabilities
-            leaders += [n for n, _ in sorted(probs.items(), key=lambda kv: -kv[1])[:cfg.shortlist]]
-        final = client.system_one(
-            state=state, questions=_wide_questions(cfg, [by_name[n] for n in leaders], False), model=cfg.model
-        )
-        responses.append(final)
-        probabilities = final.answers["which"].probabilities
-    else:
-        probabilities = first.answers["which"].probabilities
+    by_name = {s.name: s for s in skills}
+    keep = cfg.shortlist
+    while len(responses) > 1:
+        leaders = [s for r in responses for s in _top(cfg, by_name, r, keep)]
+        next_chunks = _chunks(cfg, leaders)
+        while len(next_chunks) >= len(responses) and keep > 1:
+            keep -= 1
+            leaders = [s for r in responses for s in _top(cfg, by_name, r, keep)]
+            next_chunks = _chunks(cfg, leaders)
+        round_responses = [
+            client.system_one(state=state, questions=_wide_questions(cfg, chunk, False), model=cfg.model)
+            for chunk in next_chunks
+        ]
+        responses = round_responses
+        all_responses.extend(round_responses)
+    probabilities = responses[0].answers["which"].probabilities
     return Wide(
         probabilities=probabilities,
         gate_values=gate_values,
         model=first.model,
-        input_tokens=sum((r.usage.input_tokens or 0) for r in responses),
-        output_tokens=sum((r.usage.output_tokens or 0) for r in responses),
+        input_tokens=sum((r.usage.input_tokens or 0) for r in all_responses),
+        output_tokens=sum((r.usage.output_tokens or 0) for r in all_responses),
     )
 
 

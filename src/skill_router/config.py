@@ -53,6 +53,8 @@ class Config:
             v = getattr(self, name)
             if not 0.0 <= v <= 1.0:
                 problems.append(f"{name} must be between 0 and 1")
+        if self.wide_chunk_chars < 2 * (self.wide_description_chars + 80):
+            problems.append("wide_chunk_chars must fit at least two entries: 2 * (wide_description_chars + 80)")
         if self.gate_floor > self.gate_threshold:
             problems.append("gate_floor must not exceed gate_threshold")
         for name in ("timeout", "hook_timeout", "hook_deadline"):

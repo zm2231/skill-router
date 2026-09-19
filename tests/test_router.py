@@ -110,8 +110,30 @@ class RouteTests(unittest.TestCase):
         r = route(c, Config(shortlist=3), skills(2), "x")
         self.assertEqual(r.winner, "s0")
 
+    def test_every_wide_request_stays_within_bound(self):
+        from skill_router.router import _cost
+        cfg = Config(wide_chunk_chars=200, wide_description_chars=20, shortlist=3)
+        many = skills(40)
+        wide = {s.name: 0.0 for s in many}
+        wide["s33"] = 0.9
+        c = FakeClient(wide, NEEDS, "s33", {"s33": 0.9, "s0": 0.1, "s1": 0.1, "s2": 0.1, "s3": 0.1})
+        r = route(c, cfg, many, "thing 33")
+        self.assertEqual(r.winner, "s33")
+        by_name = {s.name: s for s in many}
+        wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
+        self.assertGreater(len(wide_calls), 3)
+        for q in wide_calls:
+            names = list(q["which"].criteria)
+            self.assertLessEqual(sum(_cost(cfg, by_name[n]) for n in names), cfg.wide_chunk_chars, names)
+        self.assertEqual(sum(1 for q in wide_calls if any(k.startswith("gate::") for k in q)), 1)
+
+    def test_chunk_too_small_for_one_entry_is_rejected(self):
+        from skill_router.config import ConfigError
+        with self.assertRaises(ConfigError):
+            Config(wide_chunk_chars=400, wide_description_chars=320)
+
     def test_chunking_merges_leaders(self):
-        cfg = Config(wide_chunk_chars=120, shortlist=2)
+        cfg = Config(wide_chunk_chars=200, wide_description_chars=20, shortlist=2)
         many = skills(12)
         wide = {s.name: 0.0 for s in many}
         wide["s7"] = 0.9
