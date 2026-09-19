@@ -117,7 +117,7 @@ class Config:
         if path.is_file():
             try:
                 data = tomllib.loads(path.read_text(encoding="utf-8"))
-            except tomllib.TOMLDecodeError as exc:
+            except (tomllib.TOMLDecodeError, OSError, UnicodeDecodeError) as exc:
                 raise ConfigError(f"{path}: {exc}") from exc
         unknown = sorted(k for k in data if k not in cls.__dataclass_fields__)
         if unknown:

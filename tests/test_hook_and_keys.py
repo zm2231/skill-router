@@ -55,6 +55,17 @@ class HookTests(unittest.TestCase):
         with mock.patch("sys.stdin", io.StringIO("not json")):
             self.assertEqual(hook.main(), 0)
 
+    def test_main_never_fails_on_wrong_types_or_internal_errors(self):
+        for raw in ('{"prompt": 42}', '{"prompt": []}', '{"prompt": {}}', '[]', '{"prompt": "a long enough prompt", "cwd": 7}'):
+            out = io.StringIO()
+            with mock.patch("sys.stdin", io.StringIO(raw)), mock.patch("sys.stdout", out), \
+                 mock.patch.object(hook, "route_intent", side_effect=RuntimeError("boom")):
+                self.assertEqual(hook.main(), 0, raw)
+            self.assertEqual(out.getvalue(), "", raw)
+        with mock.patch("sys.stdin", io.StringIO('{"prompt": "a long enough prompt"}')), \
+             mock.patch.object(hook, "run", side_effect=SystemExit(9)), mock.patch("sys.stderr", io.StringIO()):
+            self.assertEqual(hook.main(), 0)
+
 
 class KeyStoreTests(unittest.TestCase):
     def test_file_store_is_atomic_and_private(self):

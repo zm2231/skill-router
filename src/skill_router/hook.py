@@ -29,20 +29,21 @@ def _route_in_thread(prompt: str, cwd: str | None, cfg: Config, box: dict) -> No
 
 def run(payload: object, cfg: Config | None = None) -> str:
     """The block to print for this payload, or an empty string. Never raises."""
-    if not isinstance(payload, dict):
+    if not isinstance(payload, dict) or not isinstance(payload.get("prompt"), str):
         return ""
-    prompt = (payload.get("prompt") or "").strip()
+    prompt = payload["prompt"].strip()
     if len(prompt) < MIN_PROMPT_CHARS or prompt.startswith("/"):
         return ""
+    cwd = payload.get("cwd")
+    if not isinstance(cwd, str):
+        cwd = None
     try:
         cfg = cfg or Config.load()
     except BaseException as exc:
         print(f"skill-router: {exc}", file=sys.stderr)
         return ""
     box: dict = {}
-    worker = threading.Thread(
-        target=_route_in_thread, args=(prompt, payload.get("cwd"), cfg, box), daemon=True
-    )
+    worker = threading.Thread(target=_route_in_thread, args=(prompt, cwd, cfg, box), daemon=True)
     worker.start()
     worker.join(cfg.hook_deadline)
     if worker.is_alive():
@@ -59,12 +60,14 @@ def main() -> int:
         payload = json.load(sys.stdin)
     except (json.JSONDecodeError, OSError, ValueError):
         return 0
-    block = run(payload)
-    if block:
-        try:
+    try:
+        block = run(payload)
+        if block:
             print(block)
-        except BrokenPipeError:
-            pass
+    except BrokenPipeError:
+        pass
+    except BaseException as exc:
+        print(f"skill-router: {exc!r}", file=sys.stderr)
     return 0
 
 

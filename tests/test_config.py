@@ -33,6 +33,10 @@ class ConfigTests(unittest.TestCase):
                 path.write_text("shortlist = 2\nmodel = 'jev-1.13.0'\n")
                 cfg = Config.load()
                 self.assertEqual((cfg.shortlist, cfg.model), (2, "jev-1.13.0"))
+                with mock.patch("pathlib.Path.read_text", side_effect=PermissionError("denied")):
+                    with self.assertRaises(ConfigError) as ctx:
+                        Config.load()
+                self.assertIn(str(path), str(ctx.exception))
 
     def test_env_model_override(self):
         with tempfile.TemporaryDirectory() as d:

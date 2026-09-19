@@ -32,7 +32,7 @@ def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
     """
     try:
         r = route_intent(intent, context, Path(cwd) if cwd else None)
-    except (MissingKeyError, ConfigError, OSError, TypeSafeError) as exc:
+    except (MissingKeyError, ConfigError, TypeSafeError, OSError) as exc:
         return {"error": str(exc), "outcome": "error"}
     out = asdict(r)
     out["ranked"] = out["ranked"][:6]

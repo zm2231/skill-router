@@ -38,6 +38,18 @@ class RosterCommandTests(unittest.TestCase):
                     self.assertEqual(cli.main(["roster"]), 2)
                 self.assertIn("exclude", err.getvalue())
 
+    def test_unreadable_config_exits_2(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "c.toml"
+            path.write_text("shortlist = 2\n")
+            err = io.StringIO()
+            with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(path)}), \
+                 mock.patch("pathlib.Path.read_text", side_effect=PermissionError("denied")), \
+                 mock.patch("sys.stderr", err):
+                self.assertEqual(cli.main(["roster"]), 2)
+            self.assertIn("denied", err.getvalue())
+            self.assertNotIn("Traceback", err.getvalue())
+
     def test_typesafe_failure_exits_3_without_traceback(self):
         from typesafe_sdk import TypeSafeAPITimeoutError
         err = io.StringIO()
