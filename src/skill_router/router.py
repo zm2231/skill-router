@@ -81,7 +81,7 @@ def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
     size = 0
     for s in skills:
         cost = _cost(cfg, s)
-        if chunks[-1] and size + cost > cfg.wide_chunk_chars:
+        if chunks[-1] and size + cost > cfg.choice_chars:
             chunks.append([])
             size = 0
         chunks[-1].append(s)
@@ -156,7 +156,10 @@ def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: 
 
 
 def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
-    criteria = {n: f"{by_name[n].description}. {by_name[n].body[:cfg.excerpt_chars]}" for n in names}
+    criteria = {
+        n: f"{by_name[n].description[:cfg.rerank_description_chars]}. {by_name[n].body[:cfg.excerpt_chars]}"
+        for n in names
+    }
     criteria[NO_MATCH] = NO_MATCH_CRITERIA
     questions = {
         "which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria),
@@ -165,7 +168,7 @@ def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names
         questions[f"fits::{n}"] = Noul(
             instructions=(
                 f"Does the skill '{n}' do the specific thing the user's request asks "
-                f"for? It is described as: {by_name[n].description}"
+                f"for? It is described as: {by_name[n].description[:cfg.rerank_description_chars]}"
             )
         )
     return client.system_one(state=_state(cfg, intent, context), questions=questions, model=cfg.model)

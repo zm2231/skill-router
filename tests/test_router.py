@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 
 from skill_router.config import Config
 from skill_router.roster import Skill
-from skill_router.router import MATCHED, MISSING, NO_MATCH, NONE_NEEDED, route, suggestion_block
+from skill_router.router import MATCHED, MISSING, NO_MATCH, NO_MATCH_CRITERIA, NONE_NEEDED, route, suggestion_block
 
 
 @dataclass
@@ -112,7 +112,7 @@ class RouteTests(unittest.TestCase):
 
     def test_every_wide_request_stays_within_bound(self):
         from skill_router.router import _cost
-        cfg = Config(wide_chunk_chars=320, wide_description_chars=20, shortlist=3)
+        cfg = Config(choice_chars=1000, wide_description_chars=20, shortlist=3, rerank_description_chars=10, excerpt_chars=1)
         many = skills(80)
         wide = {s.name: 0.0 for s in many}
         wide["s33"] = 0.9
@@ -124,18 +124,18 @@ class RouteTests(unittest.TestCase):
         self.assertGreater(len(wide_calls), 3)
         for q in wide_calls:
             names = list(q["which"].criteria)
-            self.assertLessEqual(sum(_cost(cfg, by_name[n]) for n in names), cfg.wide_chunk_chars, names)
+            self.assertLessEqual(sum(_cost(cfg, by_name[n]) for n in names), cfg.choice_chars, names)
         self.assertEqual(sum(1 for q in wide_calls if any(k.startswith("gate::") for k in q)), 1)
 
     def test_chunk_too_small_for_one_entry_is_rejected(self):
         from skill_router.config import ConfigError
         with self.assertRaises(ConfigError):
-            Config(wide_chunk_chars=400, wide_description_chars=320)
-        Config(wide_chunk_chars=2 * (128 + 320 + 8), wide_description_chars=320)
+            Config(choice_chars=400, wide_description_chars=320)
+        Config(choice_chars=2 * (128 + 320 + 8), wide_description_chars=320, rerank_description_chars=1, excerpt_chars=1)
 
     def test_chunking_merges_leaders(self):
-        cfg = Config(wide_chunk_chars=320, wide_description_chars=20, shortlist=2)
-        many = skills(24)
+        cfg = Config(choice_chars=1000, wide_description_chars=20, shortlist=2, rerank_description_chars=10, excerpt_chars=1)
+        many = skills(100)
         wide = {s.name: 0.0 for s in many}
         wide["s7"] = 0.9
         c = FakeClient(wide, NEEDS, "s7", {"s7": 0.9, "s0": 0.1, "s1": 0.1, "s3": 0.1})
@@ -148,8 +148,8 @@ class RouteTests(unittest.TestCase):
     def test_longest_allowed_names_stay_bounded_and_terminate(self):
         from skill_router.roster import NAME_CHARS
         from skill_router.router import _cost
-        cfg = Config(wide_chunk_chars=2 * (NAME_CHARS + 10 + 8), wide_description_chars=10, shortlist=3)
-        many = [Skill(f"n{i}".ljust(NAME_CHARS, "x"), "codex", f"/x/{i}/SKILL.md", "d" * 50, "b") for i in range(7)]
+        cfg = Config(choice_chars=1000, wide_description_chars=10, shortlist=3, rerank_description_chars=10, excerpt_chars=1)
+        many = [Skill(f"n{i}".ljust(NAME_CHARS, "x"), "codex", f"/x/{i}/SKILL.md", "d" * 50, "b") for i in range(20)]
         target = many[5].name
         wide = {s.name: 0.0 for s in many}
         wide[target] = 0.9
@@ -160,7 +160,28 @@ class RouteTests(unittest.TestCase):
         wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
         self.assertEqual(len(wide_calls), 4 + 2 + 1)
         for q in wide_calls:
-            self.assertLessEqual(sum(_cost(cfg, by_name[n]) for n in q["which"].criteria), cfg.wide_chunk_chars)
+            self.assertLessEqual(sum(_cost(cfg, by_name[n]) for n in q["which"].criteria), cfg.choice_chars)
+
+    def test_rerank_request_stays_within_bound(self):
+        from skill_router.config import RERANK_OVERHEAD
+        from skill_router.roster import BODY_CHARS, NAME_CHARS
+        cfg = Config(shortlist=3)
+        DESCRIPTION_CHARS = cfg.rerank_description_chars * 2
+        self.assertLessEqual(len(NO_MATCH) + len(NO_MATCH_CRITERIA) + 16, RERANK_OVERHEAD)
+        many = [
+            Skill(f"n{i}".ljust(NAME_CHARS, "x"), "codex", "/x", "d" * DESCRIPTION_CHARS, "b" * BODY_CHARS)
+            for i in range(4)
+        ]
+        target = many[2].name
+        wide = {s.name: 0.0 for s in many}
+        wide[target] = 0.9
+        c = FakeClient(wide, NEEDS, target, {s.name: 0.1 for s in many} | {target: 0.9})
+        self.assertEqual(route(c, cfg, many, "x").winner, target)
+        rerank_calls = [q for q in c.calls if NO_MATCH in q["which"].criteria]
+        self.assertEqual(len(rerank_calls), 1)
+        size = sum(len(k) + len(v) + 16 for k, v in rerank_calls[0]["which"].criteria.items())
+        self.assertLessEqual(size, cfg.max_rerank_chars)
+        self.assertLessEqual(cfg.max_rerank_chars, cfg.choice_chars)
 
 
 if __name__ == "__main__":

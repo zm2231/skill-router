@@ -7,9 +7,10 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .roster import NAME_CHARS
+from .roster import BODY_CHARS, NAME_CHARS
 
 HOOK_CEILING = 18.0
+RERANK_OVERHEAD = 400
 
 
 class ConfigError(ValueError):
@@ -33,13 +34,14 @@ class Config:
     fits_threshold: float = 0.30
     gray_fits_threshold: float = 0.75
     wide_description_chars: int = 320
+    rerank_description_chars: int = 1500
     excerpt_chars: int = 700
     timeout: float = 30.0
     hook_timeout: float = 6.0
     hook_deadline: float = 15.0
     intent_chars: int = 4_000
     context_chars: int = 4_000
-    wide_chunk_chars: int = 90_000
+    choice_chars: int = 90_000
     extra_roots: list[str] = field(default_factory=list)
     disabled_harnesses: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
@@ -51,6 +53,12 @@ class Config:
     def max_entry_chars(self) -> int:
         return NAME_CHARS + self.wide_description_chars + 8
 
+    @property
+    def max_rerank_chars(self) -> int:
+        """Upper bound on the rerank Choice: every shortlisted entry plus the no-match option."""
+        entry = NAME_CHARS + self.rerank_description_chars + min(self.excerpt_chars, BODY_CHARS) + 16
+        return self.shortlist * entry + RERANK_OVERHEAD
+
     def validate(self) -> None:
         problems = self._type_problems()
         if problems:
@@ -61,9 +69,14 @@ class Config:
             v = getattr(self, name)
             if not 0.0 <= v <= 1.0:
                 problems.append(f"{name} must be between 0 and 1")
-        if self.wide_chunk_chars < 2 * self.max_entry_chars:
+        if self.choice_chars < 2 * self.max_entry_chars:
             problems.append(
-                f"wide_chunk_chars must fit at least two entries: 2 * ({NAME_CHARS} + wide_description_chars + 8)"
+                f"choice_chars must fit at least two entries: 2 * ({NAME_CHARS} + wide_description_chars + 8)"
+            )
+        if self.max_rerank_chars > self.choice_chars:
+            problems.append(
+                f"shortlist * ({NAME_CHARS} + rerank_description_chars + min(excerpt_chars, {BODY_CHARS}) + 16) "
+                f"+ {RERANK_OVERHEAD} must not exceed choice_chars"
             )
         if self.gate_floor > self.gate_threshold:
             problems.append("gate_floor must not exceed gate_threshold")
@@ -74,7 +87,7 @@ class Config:
             problems.append(f"hook_deadline must not exceed {HOOK_CEILING:g}; the installed hook is killed at 20s")
         if self.hook_timeout > self.hook_deadline:
             problems.append("hook_timeout must not exceed hook_deadline")
-        for name in ("wide_description_chars", "excerpt_chars", "intent_chars", "context_chars", "wide_chunk_chars"):
+        for name in ("wide_description_chars", "rerank_description_chars", "excerpt_chars", "intent_chars", "context_chars", "choice_chars"):
             if getattr(self, name) < 1:
                 problems.append(f"{name} must be at least 1")
         if problems:
@@ -88,7 +101,7 @@ class Config:
             v = getattr(self, name)
             if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
                 problems.append(f"{name} must be a list of strings")
-        for name in ("shortlist", "wide_description_chars", "excerpt_chars", "intent_chars", "context_chars", "wide_chunk_chars"):
+        for name in ("shortlist", "wide_description_chars", "rerank_description_chars", "excerpt_chars", "intent_chars", "context_chars", "choice_chars"):
             if isinstance(getattr(self, name), bool) or not isinstance(getattr(self, name), int):
                 problems.append(f"{name} must be an integer")
         for name in ("gate_floor", "gate_threshold", "fits_threshold", "gray_fits_threshold", "timeout", "hook_timeout", "hook_deadline"):

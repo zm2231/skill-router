@@ -48,8 +48,12 @@ class RosterCommandTests(unittest.TestCase):
         self.assertNotIn("Traceback", err.getvalue())
 
     def test_setup_separates_rejected_key_from_outage(self):
-        from typesafe_sdk import TypeSafeAPIConnectionError, TypeSafeAuthenticationError
-        cases = [(TypeSafeAuthenticationError("bad key"), 1, "rejected"), (TypeSafeAPIConnectionError("refused"), 3, "typesafe:")]
+        from typesafe_sdk import TypeSafeAPIConnectionError, TypeSafeAPITimeoutError, TypeSafeAuthenticationError
+        cases = [
+            (TypeSafeAuthenticationError(401, "bad key", {}), 1, "rejected"),
+            (TypeSafeAPIConnectionError("refused"), 3, "typesafe:"),
+            (TypeSafeAPITimeoutError(1.0), 3, "typesafe:"),
+        ]
         for exc, code, text in cases:
             err = io.StringIO()
             with mock.patch.object(cli.client_mod, "verify_key", side_effect=exc), \

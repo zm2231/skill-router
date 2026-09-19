@@ -4,7 +4,7 @@ Routes an agent's intent to the one installed skill that fits, across harnesses,
 TypeSafe's Jev (a System One model that returns calibrated probabilities instead of text).
 
 Two requests per intent for a roster that fits one chunk, following TypeSafe's skill-suggestion
-cookbook (rosters above `wide_chunk_chars` add one request per chunk plus reduction rounds):
+cookbook (rosters above `choice_chars` add one request per chunk plus reduction rounds):
 
 1. Rank every skill on the roster with a Choice question, and gate with three Nouls that ask
    whether the request needs a skill at all.
@@ -66,8 +66,12 @@ hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 pas
                            # because the settings.json hook entry runs with timeout 20
 intent_chars = 4000        # inputs are truncated to these before they are sent
 context_chars = 4000
-wide_chunk_chars = 90000   # rosters larger than this are ranked in chunks, then leaders compete;
-                           # must hold two entries: 2 * (128 + wide_description_chars + 8)
+wide_description_chars = 320     # description chars per skill in the wide ranking
+rerank_description_chars = 1500  # description chars per shortlisted skill in the rerank
+excerpt_chars = 700              # body chars per shortlisted skill in the rerank
+choice_chars = 90000       # bound on one Choice question. Rosters above it are ranked in chunks,
+                           # then leaders compete; must hold two wide entries and the whole
+                           # shortlist with excerpts: see the config error text for the formulas
 extra_roots = ["~/my-skills"]
 disabled_harnesses = ["codex"]
 exclude = ["zain-voice-v1"]
