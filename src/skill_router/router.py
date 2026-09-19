@@ -66,8 +66,8 @@ class Route:
 
 
 
-def _state(intent: str, context: str) -> dict:
-    return {"request": intent, "recent_context": context}
+def _state(cfg: Config, intent: str, context: str) -> dict:
+    return {"request": intent[:cfg.intent_chars], "recent_context": context[:cfg.context_chars]}
 
 
 def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
@@ -109,7 +109,7 @@ class Wide:
 def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str) -> Wide:
     """Rank every skill and gate the request. Large rosters are ranked chunk by chunk, then the
     per-chunk leaders compete once more; the gate rides on the first chunk."""
-    state = _state(intent, context)
+    state = _state(cfg, intent, context)
     chunks = _chunks(cfg, skills)
     responses = [
         client.system_one(state=state, questions=_wide_questions(cfg, chunk, i == 0), model=cfg.model)
@@ -154,7 +154,7 @@ def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names
                 f"for? It is described as: {by_name[n].description}"
             )
         )
-    return client.system_one(state=_state(intent, context), questions=questions, model=cfg.model)
+    return client.system_one(state=_state(cfg, intent, context), questions=questions, model=cfg.model)
 
 
 def route(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str = "") -> Route:

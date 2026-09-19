@@ -29,7 +29,9 @@ uv run skill-router roster         # what would be routed over
 uv run skill-router route "turn this podcast into a labeled transcript"
 ```
 
-The key is read from `TYPESAFE_API_KEY` first, then the Keychain item `typesafe-api-key`.
+`setup` verifies the key against the API before storing it. The key is read from
+`TYPESAFE_API_KEY`, then the macOS Keychain item `typesafe-api-key`, then the 0600 file
+`~/.config/skill-router/api_key` (the store used on Linux).
 
 ## Roster discovery
 
@@ -45,7 +47,8 @@ The key is read from `TYPESAFE_API_KEY` first, then the Keychain item `typesafe-
 
 ## Config
 
-`~/.config/skill-router/config.toml` (or `SKILL_ROUTER_CONFIG`). Every key is optional:
+`~/.config/skill-router/config.toml` (or `SKILL_ROUTER_CONFIG`). Every key is optional;
+unknown keys and out-of-range values are rejected at load:
 
 ```toml
 model = "jev-latest"
@@ -55,7 +58,10 @@ gate_threshold = 0.30      # above: the request needs a skill; below: gray zone
 fits_threshold = 0.30      # required fit when the gate says a skill is needed
 gray_fits_threshold = 0.75 # required fit in the gray zone
 timeout = 30.0             # per request, CLI and MCP
-hook_timeout = 6.0         # per request inside the prompt hook
+hook_timeout = 6.0         # per request inside the prompt hook, no retries
+hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 past this
+intent_chars = 4000        # inputs are truncated to these before they are sent
+context_chars = 4000
 wide_chunk_chars = 90000   # rosters larger than this are ranked in chunks, then leaders compete
 extra_roots = ["~/my-skills"]
 disabled_harnesses = ["codex"]

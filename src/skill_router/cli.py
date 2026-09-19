@@ -10,9 +10,8 @@ from dataclasses import asdict
 from pathlib import Path
 
 from . import client as client_mod
-from .client import MissingKeyError
-from . import roster as roster_mod
-from .config import Config, config_path
+from .client import KeyStoreError, MissingKeyError
+from .config import Config, ConfigError, config_path
 from .router import suggestion_block
 from .service import roster, route_intent
 
@@ -66,11 +65,14 @@ def cmd_setup(args) -> int:
     if not key:
         print("empty key", file=sys.stderr)
         return 1
-    client_mod.store_key(key)
     cfg = Config.load()
-    with client_mod.make_client(cfg.model, cfg.timeout) as client:
-        names = [m.name for m in client.models.list().models]
-    print(f"key stored in Keychain ({client_mod.KEYCHAIN_SERVICE}); models: {', '.join(names)}")
+    try:
+        names = client_mod.verify_key(key, cfg.model, cfg.timeout)
+    except Exception as exc:
+        print(f"key rejected, nothing stored: {exc}", file=sys.stderr)
+        return 1
+    where = client_mod.store_key(key)
+    print(f"key verified and stored at {where}; models: {', '.join(names)}")
     print(f"config: {config_path()} ({'present' if config_path().is_file() else 'defaults'})")
     return 0
 
@@ -78,7 +80,7 @@ def cmd_setup(args) -> int:
 def main(argv=None) -> int:
     try:
         return _main(argv)
-    except MissingKeyError as exc:
+    except (MissingKeyError, ConfigError, KeyStoreError) as exc:
         print(exc, file=sys.stderr)
         return 2
 

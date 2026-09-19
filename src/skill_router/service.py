@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from typesafe_sdk import RetryPolicy
+
 from .client import make_client
 from .config import Config
 from .roster import Skill, discover
@@ -24,8 +26,9 @@ def route_intent(
     cwd: Path | None = None,
     cfg: Config | None = None,
     timeout: float | None = None,
+    retry: RetryPolicy | None = None,
 ) -> Route:
     cfg = cfg or Config.load()
     skills = roster(cfg, cwd)
-    with make_client(cfg.model, timeout or cfg.timeout) as client:
+    with make_client(cfg.model, timeout or cfg.timeout, retry) as client:
         return route(client, cfg, skills, intent, context)
