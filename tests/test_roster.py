@@ -66,6 +66,12 @@ class DiscoverTests(unittest.TestCase):
         self.assertNotIn("skip", found)
         self.assertEqual(discover(self.home, None, disabled_harnesses=["claude-code"]), [])
 
+    def test_overlong_names_are_skipped(self):
+        from skill_router.roster import NAME_CHARS
+        self.write(f".claude/skills/{'a' * NAME_CHARS}")
+        self.write(f".claude/skills/{'b' * (NAME_CHARS + 1)}")
+        self.assertEqual([s.name for s in discover(self.home, None)], ["a" * NAME_CHARS])
+
 
 if __name__ == "__main__":
     unittest.main()

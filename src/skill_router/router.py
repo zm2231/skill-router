@@ -71,6 +71,7 @@ def _state(cfg: Config, intent: str, context: str) -> dict:
 
 
 def _cost(cfg: Config, s: Skill) -> int:
+    """Chars one roster entry adds to a Choice; never above cfg.max_entry_chars."""
     return len(s.name) + min(len(s.description), cfg.wide_description_chars) + 8
 
 

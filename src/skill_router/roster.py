@@ -10,6 +10,7 @@ from typing import Iterator
 import yaml
 
 BODY_CHARS = 1600
+NAME_CHARS = 128
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,7 @@ def discover(
     seen: dict[str, Skill] = {}
 
     def add(name: str, harness: str, md: Path) -> None:
-        if name in seen or name in excluded or harness in disabled:
+        if name in seen or name in excluded or harness in disabled or len(name) > NAME_CHARS:
             return
         fields, body = parse_skill_md(md.read_text(encoding="utf-8", errors="replace"))
         description = fields.get("description", "")

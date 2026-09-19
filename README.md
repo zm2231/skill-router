@@ -62,7 +62,8 @@ hook_timeout = 6.0         # per request inside the prompt hook, no retries
 hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 past this
 intent_chars = 4000        # inputs are truncated to these before they are sent
 context_chars = 4000
-wide_chunk_chars = 90000   # rosters larger than this are ranked in chunks, then leaders compete
+wide_chunk_chars = 90000   # rosters larger than this are ranked in chunks, then leaders compete;
+                           # must hold two entries: 2 * (128 + wide_description_chars + 8)
 extra_roots = ["~/my-skills"]
 disabled_harnesses = ["codex"]
 exclude = ["zain-voice-v1"]

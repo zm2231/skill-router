@@ -7,6 +7,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .roster import NAME_CHARS
+
 
 class ConfigError(ValueError):
     pass
@@ -43,6 +45,10 @@ class Config:
     def __post_init__(self) -> None:
         self.validate()
 
+    @property
+    def max_entry_chars(self) -> int:
+        return NAME_CHARS + self.wide_description_chars + 8
+
     def validate(self) -> None:
         problems = self._type_problems()
         if problems:
@@ -53,8 +59,10 @@ class Config:
             v = getattr(self, name)
             if not 0.0 <= v <= 1.0:
                 problems.append(f"{name} must be between 0 and 1")
-        if self.wide_chunk_chars < 2 * (self.wide_description_chars + 80):
-            problems.append("wide_chunk_chars must fit at least two entries: 2 * (wide_description_chars + 80)")
+        if self.wide_chunk_chars < 2 * self.max_entry_chars:
+            problems.append(
+                f"wide_chunk_chars must fit at least two entries: 2 * ({NAME_CHARS} + wide_description_chars + 8)"
+            )
         if self.gate_floor > self.gate_threshold:
             problems.append("gate_floor must not exceed gate_threshold")
         for name in ("timeout", "hook_timeout", "hook_deadline"):

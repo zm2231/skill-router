@@ -112,8 +112,8 @@ class RouteTests(unittest.TestCase):
 
     def test_every_wide_request_stays_within_bound(self):
         from skill_router.router import _cost
-        cfg = Config(wide_chunk_chars=200, wide_description_chars=20, shortlist=3)
-        many = skills(40)
+        cfg = Config(wide_chunk_chars=320, wide_description_chars=20, shortlist=3)
+        many = skills(80)
         wide = {s.name: 0.0 for s in many}
         wide["s33"] = 0.9
         c = FakeClient(wide, NEEDS, "s33", {"s33": 0.9, "s0": 0.1, "s1": 0.1, "s2": 0.1, "s3": 0.1})
@@ -131,10 +131,11 @@ class RouteTests(unittest.TestCase):
         from skill_router.config import ConfigError
         with self.assertRaises(ConfigError):
             Config(wide_chunk_chars=400, wide_description_chars=320)
+        Config(wide_chunk_chars=2 * (128 + 320 + 8), wide_description_chars=320)
 
     def test_chunking_merges_leaders(self):
-        cfg = Config(wide_chunk_chars=200, wide_description_chars=20, shortlist=2)
-        many = skills(12)
+        cfg = Config(wide_chunk_chars=320, wide_description_chars=20, shortlist=2)
+        many = skills(24)
         wide = {s.name: 0.0 for s in many}
         wide["s7"] = 0.9
         c = FakeClient(wide, NEEDS, "s7", {"s7": 0.9, "s0": 0.1, "s1": 0.1, "s3": 0.1})
@@ -143,6 +144,23 @@ class RouteTests(unittest.TestCase):
         wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
         self.assertGreater(len(wide_calls), 2)
         self.assertEqual(sum(1 for q in wide_calls if any(k.startswith("gate::") for k in q)), 1)
+
+    def test_longest_allowed_names_stay_bounded_and_terminate(self):
+        from skill_router.roster import NAME_CHARS
+        from skill_router.router import _cost
+        cfg = Config(wide_chunk_chars=2 * (NAME_CHARS + 10 + 8), wide_description_chars=10, shortlist=3)
+        many = [Skill(f"n{i}".ljust(NAME_CHARS, "x"), "codex", f"/x/{i}/SKILL.md", "d" * 50, "b") for i in range(7)]
+        target = many[5].name
+        wide = {s.name: 0.0 for s in many}
+        wide[target] = 0.9
+        c = FakeClient(wide, NEEDS, target, {target: 0.9, many[0].name: 0.1, many[1].name: 0.1})
+        r = route(c, cfg, many, "thing 5")
+        self.assertEqual(r.winner, target)
+        by_name = {s.name: s for s in many}
+        wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
+        self.assertEqual(len(wide_calls), 4 + 2 + 1)
+        for q in wide_calls:
+            self.assertLessEqual(sum(_cost(cfg, by_name[n]) for n in q["which"].criteria), cfg.wide_chunk_chars)
 
 
 if __name__ == "__main__":
