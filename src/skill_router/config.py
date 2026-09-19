@@ -1,6 +1,7 @@
 """Runtime configuration: harness roots, thresholds, model. Read from a TOML file, overridable by env."""
 from __future__ import annotations
 
+import math
 import os
 import tomllib
 from dataclasses import dataclass, field
@@ -75,8 +76,9 @@ class Config:
             if isinstance(getattr(self, name), bool) or not isinstance(getattr(self, name), int):
                 problems.append(f"{name} must be an integer")
         for name in ("gate_floor", "gate_threshold", "fits_threshold", "gray_fits_threshold", "timeout", "hook_timeout", "hook_deadline"):
-            if isinstance(getattr(self, name), bool) or not isinstance(getattr(self, name), (int, float)):
-                problems.append(f"{name} must be a number")
+            v = getattr(self, name)
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v):
+                problems.append(f"{name} must be a finite number")
         return problems
 
     @classmethod

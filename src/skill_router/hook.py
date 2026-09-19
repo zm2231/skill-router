@@ -61,7 +61,10 @@ def main() -> int:
         return 0
     block = run(payload)
     if block:
-        print(block)
+        try:
+            print(block)
+        except BrokenPipeError:
+            pass
     return 0
 
 

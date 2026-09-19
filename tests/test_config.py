@@ -64,3 +64,20 @@ class ConfigTypeTests(unittest.TestCase):
                 with self.assertRaises(ConfigError) as ctx:
                     Config.load()
             self.assertIn(str(path), str(ctx.exception))
+
+
+class FiniteTests(unittest.TestCase):
+    def test_non_finite_numbers_rejected(self):
+        for name in ("timeout", "hook_timeout", "hook_deadline", "gate_floor"):
+            for bad in (float("nan"), float("inf"), -float("inf")):
+                with self.assertRaises(ConfigError, msg=(name, bad)):
+                    Config(**{name: bad})
+
+    def test_nan_in_toml_names_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "c.toml"
+            path.write_text("hook_deadline = nan\n")
+            with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(path)}):
+                with self.assertRaises(ConfigError) as ctx:
+                    Config.load()
+            self.assertIn("hook_deadline", str(ctx.exception))
