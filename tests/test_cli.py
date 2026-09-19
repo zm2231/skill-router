@@ -37,3 +37,12 @@ class RosterCommandTests(unittest.TestCase):
                 with mock.patch("sys.stderr", err):
                     self.assertEqual(cli.main(["roster"]), 2)
                 self.assertIn("exclude", err.getvalue())
+
+    def test_typesafe_failure_exits_3_without_traceback(self):
+        from typesafe_sdk import TypeSafeAPITimeoutError
+        err = io.StringIO()
+        with mock.patch.object(cli, "route_intent", side_effect=TypeSafeAPITimeoutError("request timed out")), \
+             mock.patch("sys.stderr", err):
+            self.assertEqual(cli.main(["route", "do a thing"]), 3)
+        self.assertIn("typesafe:", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())

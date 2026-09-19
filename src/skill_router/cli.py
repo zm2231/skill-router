@@ -9,6 +9,8 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
+from typesafe_sdk import TypeSafeError
+
 from . import client as client_mod
 from .client import KeyStoreError, MissingKeyError
 from .config import Config, ConfigError, config_path
@@ -84,6 +86,9 @@ def main(argv=None) -> int:
     except (MissingKeyError, ConfigError, KeyStoreError) as exc:
         print(exc, file=sys.stderr)
         return 2
+    except TypeSafeError as exc:
+        print(f"typesafe: {exc}", file=sys.stderr)
+        return 3
     except BrokenPipeError:
         try:
             sys.stdout.close()

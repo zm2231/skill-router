@@ -68,6 +68,13 @@ class KeyStoreTests(unittest.TestCase):
                     client_mod.store_key("second", path)
             self.assertEqual(client_mod.file_key(path), "first")
             self.assertEqual([p.name for p in path.parent.iterdir()], ["api_key"])
+            with mock.patch("pathlib.Path.mkdir", side_effect=OSError("read-only filesystem")):
+                with self.assertRaises(client_mod.KeyStoreError):
+                    client_mod.store_key("third", path)
+            with mock.patch("tempfile.mkstemp", side_effect=OSError("no space")):
+                with self.assertRaises(client_mod.KeyStoreError):
+                    client_mod.store_key("third", path)
+            self.assertEqual(client_mod.file_key(path), "first")
 
     def test_api_key_precedence_and_missing(self):
         with tempfile.TemporaryDirectory() as d:

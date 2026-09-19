@@ -73,18 +73,20 @@ def store_key(key: str, path: Path | None = None) -> str:
             raise KeyStoreError(f"keychain write failed: {exc.stderr.strip()}") from exc
         return f"keychain:{KEYCHAIN_SERVICE}"
     path = path or key_file()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".api_key.")
+    tmp: str | None = None
     try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".api_key.")
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             fh.write(key + "\n")
         os.chmod(tmp, 0o600)
         os.replace(tmp, path)
     except OSError as exc:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
         raise KeyStoreError(f"could not write {path}: {exc}") from exc
     return str(path)
 

@@ -41,7 +41,8 @@ uv run skill-router route "turn this podcast into a labeled transcript"
 
 ## Surfaces
 
-- CLI: `skill-router route "<intent>" [--json | --block]`
+- CLI: `skill-router route "<intent>" [--json | --block]`. Exit 2 for a missing key or bad config,
+  3 when TypeSafe cannot be reached or rejects the request, with a one-line stderr message.
 - MCP: `skill-router-mcp` (stdio) exposes `route_skill(intent, context, cwd)` and `list_skills(cwd)`.
 - Claude Code hook: `skill-router-hook` reads the `UserPromptSubmit` payload and prints a
   `<skill_relevance>` block; wire it in `settings.json` under `hooks.UserPromptSubmit` with

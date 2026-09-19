@@ -5,6 +5,7 @@ from dataclasses import asdict
 from pathlib import Path
 
 from mcp.server.mcpserver import MCPServer
+from typesafe_sdk import TypeSafeError
 
 from .client import MissingKeyError
 from .config import Config, ConfigError
@@ -31,7 +32,7 @@ def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
     """
     try:
         r = route_intent(intent, context, Path(cwd) if cwd else None)
-    except (MissingKeyError, ConfigError, OSError) as exc:
+    except (MissingKeyError, ConfigError, OSError, TypeSafeError) as exc:
         return {"error": str(exc), "outcome": "error"}
     out = asdict(r)
     out["ranked"] = out["ranked"][:6]
