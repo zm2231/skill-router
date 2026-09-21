@@ -1,6 +1,7 @@
 """One entry point the CLI, MCP server, and hook all share."""
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from typesafe_sdk import RetryPolicy
@@ -8,7 +9,7 @@ from typesafe_sdk import RetryPolicy
 from .client import make_client
 from .config import Config
 from .roster import Skill, discover
-from .router import Route, route
+from .router import Route, request_rounds, route
 
 
 def roster(cfg: Config, cwd: Path | None) -> list[Skill]:
@@ -27,10 +28,17 @@ def route_intent(
     context: str = "",
     cwd: Path | None = None,
     cfg: Config | None = None,
-    timeout: float | None = None,
-    retry: RetryPolicy | None = None,
+    deadline: float | None = None,
 ) -> Route:
+    """With a deadline, every request gets an equal share of what is left after discovery, at
+    most hook_timeout, with no retries, so the whole route fits inside it."""
     cfg = cfg or Config.load()
+    started = time.monotonic()
     skills = roster(cfg, cwd)
-    with make_client(cfg.model, timeout or cfg.timeout, retry) as client:
+    timeout, retry = cfg.timeout, None
+    if deadline is not None:
+        remaining = max(deadline - (time.monotonic() - started), 0.0)
+        timeout = min(cfg.hook_timeout, remaining / request_rounds(cfg, len(skills)))
+        retry = RetryPolicy(max_retries=0, timeout=timeout)
+    with make_client(cfg.model, timeout, retry) as client:
         return route(client, cfg, skills, intent, context)

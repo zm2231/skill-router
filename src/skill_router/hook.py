@@ -7,8 +7,6 @@ import sys
 import threading
 from pathlib import Path
 
-from typesafe_sdk import RetryPolicy
-
 from .config import Config
 from .router import suggestion_block
 from .service import route_intent
@@ -18,11 +16,7 @@ MIN_PROMPT_CHARS = 12
 
 def _route_in_thread(prompt: str, cwd: str | None, cfg: Config, box: dict) -> None:
     try:
-        box["route"] = route_intent(
-            prompt, "", Path(cwd) if cwd else None, cfg,
-            timeout=cfg.hook_timeout,
-            retry=RetryPolicy(max_retries=0, timeout=cfg.hook_timeout),
-        )
+        box["route"] = route_intent(prompt, "", Path(cwd) if cwd else None, cfg, deadline=cfg.hook_deadline)
     except BaseException as exc:
         box["error"] = exc
 

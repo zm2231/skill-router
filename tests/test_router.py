@@ -17,6 +17,7 @@ from skill_router.router import (
     NONE_NEEDED,
     UNCERTAIN,
     MalformedResponse,
+    request_rounds,
     route,
     suggestion_block,
 )
@@ -202,6 +203,12 @@ class RouteTests(unittest.TestCase):
         c = FakeClient({"s1": 0.5}, {NONE: 0.9}, drop=frozenset({"need"}))
         with self.assertRaises(MalformedResponse):
             route(c, Config(), skills(), "x")
+
+    def test_request_rounds_counts_score_waves(self):
+        self.assertEqual(request_rounds(Config(), 0), 1)
+        self.assertEqual(request_rounds(Config(shard_size=50, parallel=4), 200), 3)
+        self.assertEqual(request_rounds(Config(shard_size=50, parallel=4), 201), 4)
+        self.assertEqual(request_rounds(Config(shard_size=1, parallel=1), 5), 7)
 
     def test_failed_shard_propagates(self):
         c = FakeClient({"s1": 0.9}, {"s1": 0.9}, fail_shard=2)

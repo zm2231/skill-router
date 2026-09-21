@@ -63,6 +63,16 @@ class ConfigTypeTests(unittest.TestCase):
                 Config(**bad)
         Config(direct_floor=0, timeout=10)
 
+    def test_source_that_is_a_file_is_rejected_but_absent_or_off_is_fine(self):
+        with tempfile.TemporaryDirectory() as d:
+            f = Path(d) / "not-a-dir"
+            f.write_text("x")
+            for bad in (dict(roots={"pi": str(f)}), dict(plugin_cache=str(f))):
+                with self.assertRaises(ConfigError, msg=bad) as ctx:
+                    Config(**bad)
+                self.assertIn("not a directory", str(ctx.exception))
+            Config(roots={"pi": str(Path(d) / "missing")}, plugin_cache="")
+
     def test_load_names_path_for_list_type(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.toml"

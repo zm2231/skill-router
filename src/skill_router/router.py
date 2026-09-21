@@ -2,6 +2,7 @@
 request needed a skill at all when nothing verified."""
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
@@ -74,6 +75,15 @@ def _score_question(cfg: Config, s: Skill) -> Score:
 
 def _shards(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
     return [skills[i:i + cfg.shard_size] for i in range(0, len(skills), cfg.shard_size)]
+
+
+def request_rounds(cfg: Config, skill_count: int) -> int:
+    """Most sequential requests a route can make: the score waves the pool runs one after
+    another, the rerank, and the need question; just the need question for an empty roster."""
+    if skill_count == 0:
+        return 1
+    waves = math.ceil(math.ceil(skill_count / cfg.shard_size) / cfg.parallel)
+    return waves + 2
 
 
 class _Usage:

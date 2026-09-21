@@ -66,14 +66,27 @@ DEFAULT_PLUGIN_CACHE = "~/.claude/plugins/cache"
 DEFAULT_PROJECT_SKILLS = ".claude/skills"
 
 
+def check_source_dir(path: str | Path) -> Path | None:
+    """The expanded directory a skill source points at; None when it is off or absent.
+    A path that exists but is not a directory is a misconfiguration, never an empty source."""
+    if not path:
+        return None
+    expanded = Path(path).expanduser()
+    if not expanded.exists():
+        return None
+    if not expanded.is_dir():
+        raise NotADirectoryError(f"{expanded} is not a directory")
+    return expanded
+
+
 def _skill_files(root: Path) -> Iterator[Path]:
-    if not root.is_dir():
+    if check_source_dir(root) is None:
         return
     yield from sorted(root.rglob("SKILL.md"))
 
 
 def _plugin_skill_files(cache: Path) -> Iterator[tuple[str, Path]]:
-    if not cache.is_dir():
+    if check_source_dir(cache) is None:
         return
     for md in sorted(cache.glob("*/*/*/skills/*/SKILL.md")):
         plugin = md.parents[2].parent.name
@@ -91,8 +104,8 @@ def harness_sources(
     sources: list[tuple[str, Path]] = []
     if cwd and project_skills and "project" not in disabled:
         for ancestor in [cwd, *cwd.parents]:
-            project = ancestor / project_skills
-            if project.is_dir():
+            project = check_source_dir(ancestor / project_skills)
+            if project is not None:
                 sources.append(("project", project))
                 break
     sources += [(name, Path(path).expanduser()) for name, path in roots.items() if name not in disabled and path]

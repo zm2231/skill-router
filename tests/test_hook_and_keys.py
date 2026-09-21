@@ -11,8 +11,9 @@ from pathlib import Path
 from unittest import mock
 
 from skill_router import client as client_mod
-from skill_router import hook
+from skill_router import hook, service
 from skill_router.config import Config
+from skill_router.roster import Skill
 from skill_router.router import MATCHED, Route
 
 
@@ -49,6 +50,29 @@ class HookTests(unittest.TestCase):
             self.assertEqual(out, "")
             self.assertLess(time.monotonic() - started, 1.5)
             self.assertIn("no answer within", err.getvalue())
+
+    def test_deadline_is_shared_across_every_request_the_roster_needs(self):
+        many = [Skill(f"s{i}", "h", f"/x/s{i}/SKILL.md", "d", "b") for i in range(5)]
+        built = []
+
+        def fake_client(model, timeout, retry):
+            built.append((timeout, retry))
+            return mock.MagicMock(__enter__=lambda s: s, __exit__=lambda *a: None)
+
+        with mock.patch.object(service, "roster", return_value=many), \
+             mock.patch.object(service, "make_client", side_effect=fake_client), \
+             mock.patch.object(service, "route", return_value=fake_route("s1")):
+            cfg = Config(shard_size=1, parallel=1, hook_timeout=5, hook_deadline=15)
+            service.route_intent("transcribe this podcast please", cfg=cfg, deadline=cfg.hook_deadline)
+            cfg = Config(shard_size=50, parallel=4, hook_timeout=5, hook_deadline=15)
+            service.route_intent("transcribe this podcast please", cfg=cfg, deadline=cfg.hook_deadline)
+            service.route_intent("transcribe this podcast please", cfg=cfg)
+        self.assertLessEqual(built[0][0], 15 / 7)
+        self.assertGreater(built[0][0], 15 / 7 - 0.5)
+        self.assertEqual(built[0][1].max_retries, 0)
+        self.assertLessEqual(built[1][0], 5.0)
+        self.assertGreater(built[1][0], 4.5)
+        self.assertEqual(built[2], (cfg.timeout, None))
 
     def test_main_never_fails_on_bad_stdin(self):
         with mock.patch("sys.stdin", io.StringIO("not json")):

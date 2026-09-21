@@ -85,6 +85,17 @@ class DiscoverTests(unittest.TestCase):
         self.assertEqual(found, [])
         self.assertEqual(self.discover(roots={"codex": ""}), [])
 
+    def test_project_skills_path_that_is_a_file_fails_explicitly(self):
+        proj = self.home / "proj"
+        (proj / ".claude").mkdir(parents=True)
+        (proj / ".claude/skills").write_text("x")
+        with self.assertRaises(NotADirectoryError):
+            self.discover(proj)
+        (self.home / "pi").mkdir()
+        (self.home / "pi/skills").write_text("x")
+        with self.assertRaises(NotADirectoryError):
+            self.discover(roots={"pi": str(self.home / "pi/skills")})
+
     def test_plugin_cache_and_project_dir_can_be_turned_off(self):
         self.write(".claude/plugins/cache/market/plug/1.0.0/skills/inner")
         proj = self.home / "proj"

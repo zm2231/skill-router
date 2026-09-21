@@ -7,10 +7,10 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .roster import DEFAULT_PLUGIN_CACHE, DEFAULT_PROJECT_SKILLS
+from .roster import DEFAULT_PLUGIN_CACHE, DEFAULT_PROJECT_SKILLS, check_source_dir
 
 HOOK_CEILING = 18.0
-HOOK_ROUNDS = 3
+HOOK_MIN_ROUNDS = 3
 
 INTEGER_FIELDS = (
     "shard_size", "parallel", "shortlist_cap", "shortlist_min",
@@ -80,8 +80,14 @@ class Config:
                 problems.append(f"{name} must be positive")
         if self.hook_deadline > HOOK_CEILING:
             problems.append(f"hook_deadline must not exceed {HOOK_CEILING:g}; the installed hook is killed at 20s")
-        if HOOK_ROUNDS * self.hook_timeout > self.hook_deadline:
-            problems.append(f"{HOOK_ROUNDS} * hook_timeout must not exceed hook_deadline: a route is up to {HOOK_ROUNDS} sequential requests")
+        if HOOK_MIN_ROUNDS * self.hook_timeout > self.hook_deadline:
+            problems.append(f"{HOOK_MIN_ROUNDS} * hook_timeout must not exceed hook_deadline: a route is at least "
+                            f"{HOOK_MIN_ROUNDS} sequential requests, and larger rosters shrink each request's share")
+        for name, path in [*self.roots.items(), ("plugin_cache", self.plugin_cache)]:
+            try:
+                check_source_dir(path)
+            except NotADirectoryError as exc:
+                problems.append(f"{name}: {exc}")
         if problems:
             raise ConfigError("; ".join(problems))
 
