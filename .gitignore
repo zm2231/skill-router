@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 .roster-cache.json
 docs/
+.DS_Store
