@@ -3,12 +3,19 @@ name = "skill-router"
 version = "0.1.0"
 description = "Route an agent's intent to the right installed skill with TypeSafe's Jev"
 readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
 requires-python = ">=3.13"
+keywords = ["agent-skills", "claude-code", "codex", "mcp", "typesafe", "jev"]
 dependencies = [
     "typesafe-sdk>=0.7.0",
     "mcp>=2.2.0",
     "pyyaml>=6.0.3",
 ]
+
+[project.urls]
+Repository = "https://github.com/zm2231/skill-router"
+Issues = "https://github.com/zm2231/skill-router/issues"
 
 [project.scripts]
 skill-router = "skill_router.cli:main"

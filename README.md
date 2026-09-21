@@ -8,11 +8,14 @@ fits one request.
 
 ## Quick path
 
+You need Python 3.13+, [uv](https://docs.astral.sh/uv/), and a TypeSafe API key from
+[typesafe.ai](https://typesafe.ai).
+
 ```bash
-uv sync
-uv run skill-router setup                     # stores the TypeSafe key in the macOS Keychain
-uv run skill-router roster                    # every skill it would route over
-uv run skill-router route "turn this podcast into a labeled transcript"
+uv tool install git+https://github.com/zm2231/skill-router   # or: git clone + uv sync, then prefix each command with `uv run`
+skill-router setup                     # verifies the key, then stores it (Keychain on macOS, 0600 file elsewhere)
+skill-router roster                    # every skill it would route over
+skill-router route "turn this podcast into a labeled transcript"
 ```
 
 The last line prints the outcome, then the shortlist with each skill's probability and fit:
@@ -62,6 +65,25 @@ of its body. First occurrence of a name wins, in the order above.
 | CLI | `skill-router route "<intent>" [--context ...] [--json \| --block]` | Exit 2: missing key or bad config. Exit 3: TypeSafe unreachable or rejected the request. One-line stderr message either way |
 | MCP (stdio) | `skill-router-mcp` | `route_skill(intent, context, cwd)` and `list_skills(cwd)`; call on demand from an agent |
 | Claude Code hook | `skill-router-hook` | Fires on every `UserPromptSubmit`, prints a `<skill_relevance>` block into context |
+
+### Wiring the MCP server
+
+Claude Code:
+
+```bash
+claude mcp add --scope user skill-router -- skill-router-mcp
+```
+
+Codex (`~/.codex/config.toml`):
+
+```toml
+[mcp_servers.skill-router]
+command = "skill-router-mcp"
+```
+
+If you installed with `uv sync` instead of `uv tool install`, point `command` at
+`<repo>/.venv/bin/skill-router-mcp`. `route_skill` returns the same JSON as `route --json`
+plus a `suggestion` field holding the `<skill_relevance>` block.
 
 ### The hook costs tokens on every prompt
 
