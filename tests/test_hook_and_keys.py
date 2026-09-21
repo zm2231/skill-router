@@ -45,7 +45,7 @@ class HookTests(unittest.TestCase):
             started = time.monotonic()
             err = io.StringIO()
             with redirect_stderr(err):
-                out = hook.run({"prompt": "transcribe this podcast please"}, Config(hook_timeout=0.1, hook_deadline=0.2))
+                out = hook.run({"prompt": "transcribe this podcast please"}, Config(hook_timeout=0.05, hook_deadline=0.2))
             self.assertEqual(out, "")
             self.assertLess(time.monotonic() - started, 1.5)
             self.assertIn("no answer within", err.getvalue())

@@ -9,7 +9,7 @@ from typesafe_sdk import TypeSafeError
 
 from .client import MissingKeyError
 from .config import Config, ConfigError
-from .router import suggestion_block
+from .router import MalformedResponse, suggestion_block
 from .service import roster, route_intent
 
 server = MCPServer(
@@ -33,7 +33,7 @@ def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
     """
     try:
         r = route_intent(intent, context, Path(cwd) if cwd else None)
-    except (MissingKeyError, ConfigError, TypeSafeError, OSError) as exc:
+    except (MissingKeyError, ConfigError, TypeSafeError, MalformedResponse, OSError) as exc:
         return {"error": str(exc), "outcome": "error"}
     out = asdict(r)
     out["ranked"] = out["ranked"][:8]

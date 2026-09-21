@@ -27,6 +27,7 @@ RERANK_INSTRUCTIONS = (
     "contains the specific procedure the request needs, even if one is topically nearby."
 )
 NO_MATCH = "none-of-these"
+NO_MATCH_LABEL = "none"
 NO_MATCH_CRITERIA = (
     "None of these skills contains the specific procedure, integration, or convention that "
     "would materially change how to fulfill the request."

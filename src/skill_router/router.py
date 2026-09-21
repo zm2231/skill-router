@@ -14,8 +14,8 @@ from .prompts import (
     DIRECT,
     NEED_CRITERIA,
     NEED_INSTRUCTIONS,
-    NO_MATCH,
     NO_MATCH_CRITERIA,
+    NO_MATCH_LABEL,
     RERANK_INSTRUCTIONS,
     SCORE_INSTRUCTIONS,
     SCORE_LEVELS,
@@ -27,6 +27,10 @@ class SystemOne(Protocol):
     """The one TypeSafeClient method the router needs."""
 
     def system_one(self, state: Any, questions: Mapping[str, Any], *, model: str | None = None) -> Any: ...
+
+
+class MalformedResponse(RuntimeError):
+    """The provider answered, but not the questions that were asked."""
 
 
 MATCHED = "matched"
@@ -87,12 +91,20 @@ class _Usage:
         return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
 
 
+def _answer(response, key: str, kind: type):
+    answer = response.answers.get(key)
+    if not isinstance(answer, kind):
+        raise MalformedResponse(f"no {kind.__name__} for question {key!r}")
+    return answer
+
+
 def score_all(client: SystemOne, cfg: Config, skills: list[Skill], state: dict, usage: _Usage) -> list[Candidate]:
-    """P(direct) for every skill, each judged in its own Score question; shards run concurrently."""
+    """P(direct) for every skill, each judged in its own Score question; shards run concurrently.
+    Question keys are positional so no skill name is ever a protocol key."""
     def ask(shard: list[Skill]):
         return client.system_one(
             state=state,
-            questions={s.name: _score_question(cfg, s) for s in shard},
+            questions={f"q{i}": _score_question(cfg, s) for i, s in enumerate(shard)},
             model=cfg.model,
         )
 
@@ -102,10 +114,11 @@ def score_all(client: SystemOne, cfg: Config, skills: list[Skill], state: dict, 
     ranked: list[Candidate] = []
     for shard, response in zip(shards, responses):
         usage.add(response)
-        for s in shard:
-            answer = response.answers[s.name]
-            assert isinstance(answer, ScoreAnswer)
-            ranked.append(Candidate(s.name, answer.probabilities.get(DIRECT, 0.0)))
+        for i, s in enumerate(shard):
+            answer = _answer(response, f"q{i}", ScoreAnswer)
+            if DIRECT not in answer.probabilities:
+                raise MalformedResponse(f"score for {s.name!r} has no level {DIRECT}")
+            ranked.append(Candidate(s.name, answer.probabilities[DIRECT]))
     ranked.sort(key=lambda c: -c.direct)
     return ranked
 
@@ -119,23 +132,27 @@ def shortlist(cfg: Config, ranked: list[Candidate]) -> tuple[list[Candidate], bo
     return cleared[:cfg.shortlist_cap], len(cleared) > cfg.shortlist_cap
 
 
-def rerank(client: SystemOne, cfg: Config, by_name: dict[str, Skill], names: list[str], state: dict, usage: _Usage) -> dict[str, float]:
-    """Choice probabilities over the shortlist's full bodies plus the no-match option."""
+def rerank(client: SystemOne, cfg: Config, short: list[Candidate], by_name: dict[str, Skill], state: dict, usage: _Usage) -> list[float]:
+    """Choice probabilities over the shortlist's full bodies plus the no-match option, in shortlist
+    order with no-match last. Criterion labels are positional on the wire so names never collide."""
+    labels = [f"c{i}" for i in range(len(short))]
     criteria = {
-        n: f"{fit_json(by_name[n].description, cfg.rerank_description_chars)}. "
-           f"{fit_json(by_name[n].body, cfg.excerpt_chars)}"
-        for n in names
+        label: f"{fit_json(by_name[c.name].description, cfg.rerank_description_chars)}. "
+               f"{fit_json(by_name[c.name].body, cfg.excerpt_chars)}"
+        for label, c in zip(labels, short)
     }
-    criteria[NO_MATCH] = NO_MATCH_CRITERIA
+    criteria[NO_MATCH_LABEL] = NO_MATCH_CRITERIA
     response = client.system_one(
         state=state,
         questions={"which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria)},
         model=cfg.model,
     )
     usage.add(response)
-    answer = response.answers["which"]
-    assert isinstance(answer, ChoiceAnswer)
-    return dict(answer.probabilities)
+    answer = _answer(response, "which", ChoiceAnswer)
+    missing = [k for k in criteria if k not in answer.probabilities]
+    if missing:
+        raise MalformedResponse(f"rerank has no probability for {missing}")
+    return [answer.probabilities[k] for k in criteria]
 
 
 def need(client: SystemOne, cfg: Config, state: dict, usage: _Usage) -> float:
@@ -146,21 +163,21 @@ def need(client: SystemOne, cfg: Config, state: dict, usage: _Usage) -> float:
         model=cfg.model,
     )
     usage.add(response)
-    answer = response.answers["need"]
-    assert isinstance(answer, NoulAnswer)
-    return answer.noul
+    return _answer(response, "need", NoulAnswer).noul
 
 
-def accepted(cfg: Config, probabilities: dict[str, float]) -> str | None:
-    """The skill the rerank verified, if its probability is high enough and clear of no-match."""
-    winner = max(probabilities, key=lambda k: probabilities[k])
-    if winner == NO_MATCH:
+def accepted(cfg: Config, probabilities: list[float]) -> int | None:
+    """Index of the shortlisted skill the rerank verified: the top probability, high enough, and
+    clear of no-match, which is the last entry."""
+    top = max(range(len(probabilities)), key=lambda i: probabilities[i])
+    no_match = probabilities[-1]
+    if top == len(probabilities) - 1:
         return None
-    if probabilities[winner] < cfg.accept_probability:
+    if probabilities[top] < cfg.accept_probability:
         return None
-    if probabilities[winner] - probabilities.get(NO_MATCH, 0.0) < cfg.accept_margin:
+    if probabilities[top] - no_match < cfg.accept_margin:
         return None
-    return winner
+    return top
 
 
 def route(client: SystemOne, cfg: Config, skills: list[Skill], intent: str, context: str = "") -> Route:
@@ -175,17 +192,17 @@ def route(client: SystemOne, cfg: Config, skills: list[Skill], intent: str, cont
         by_name = {s.name: s for s in skills}
         ranked = score_all(client, cfg, skills, state, usage)
         short, truncated = shortlist(cfg, ranked)
-        probabilities = rerank(client, cfg, by_name, [c.name for c in short], state, usage)
-        no_match = probabilities.get(NO_MATCH)
-        for c in short:
-            c.rerank = probabilities.get(c.name)
+        probabilities = rerank(client, cfg, short, by_name, state, usage)
+        no_match = probabilities[-1]
+        for c, p in zip(short, probabilities):
+            c.rerank = p
         winner = accepted(cfg, probabilities)
-        if winner:
-            return Route(intent, MATCHED, winner, "rerank verified", ranked, no_match, None, truncated,
+        if winner is not None:
+            return Route(intent, MATCHED, short[winner].name, "rerank verified", ranked, no_match, None, truncated,
                          usage.as_dict(), usage.model)
-        top = max(probabilities, key=lambda k: probabilities[k])
-        reason = ("no-match chosen" if top == NO_MATCH
-                  else f"{top} at {probabilities[top]:.2f} against no-match {no_match:.2f} did not clear "
+        top = max(range(len(probabilities)), key=lambda i: probabilities[i])
+        reason = ("no-match chosen" if top == len(short)
+                  else f"{short[top].name} at {probabilities[top]:.2f} against no-match {no_match:.2f} did not clear "
                        f"{cfg.accept_probability:.2f} with margin {cfg.accept_margin:.2f}")
 
     p_need = need(client, cfg, state, usage)

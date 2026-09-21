@@ -19,7 +19,7 @@ from . import client as client_mod
 from .client import KeyStoreError, MissingKeyError
 from .config import Config, ConfigError, config_path
 from .roster import to_json
-from .router import suggestion_block
+from .router import MalformedResponse, suggestion_block
 from .service import roster, route_intent
 
 
@@ -99,7 +99,7 @@ def main(argv=None) -> int:
         except OSError:
             pass
         return 0
-    except TypeSafeError as exc:
+    except (TypeSafeError, MalformedResponse) as exc:
         print(f"typesafe: {exc}", file=sys.stderr)
         return 3
     except OSError as exc:

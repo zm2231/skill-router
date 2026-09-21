@@ -10,6 +10,7 @@ from pathlib import Path
 from .roster import DEFAULT_PLUGIN_CACHE, DEFAULT_PROJECT_SKILLS
 
 HOOK_CEILING = 18.0
+HOOK_ROUNDS = 3
 
 INTEGER_FIELDS = (
     "shard_size", "parallel", "shortlist_cap", "shortlist_min",
@@ -47,7 +48,7 @@ class Config:
     rerank_description_chars: int = 1500
     excerpt_chars: int = 700
     timeout: float = 30.0
-    hook_timeout: float = 6.0
+    hook_timeout: float = 5.0
     hook_deadline: float = 15.0
     intent_chars: int = 4_000
     context_chars: int = 4_000
@@ -79,8 +80,8 @@ class Config:
                 problems.append(f"{name} must be positive")
         if self.hook_deadline > HOOK_CEILING:
             problems.append(f"hook_deadline must not exceed {HOOK_CEILING:g}; the installed hook is killed at 20s")
-        if self.hook_timeout > self.hook_deadline:
-            problems.append("hook_timeout must not exceed hook_deadline")
+        if HOOK_ROUNDS * self.hook_timeout > self.hook_deadline:
+            problems.append(f"{HOOK_ROUNDS} * hook_timeout must not exceed hook_deadline: a route is up to {HOOK_ROUNDS} sequential requests")
         if problems:
             raise ConfigError("; ".join(problems))
 

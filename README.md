@@ -138,7 +138,7 @@ accept_margin = 0.15       # and its lead over none-of-these
 need_high = 0.70           # need probability at or above which nothing-verified becomes likely_missing
 need_low = 0.30            # at or below which it becomes none_needed; between is uncertain
 timeout = 30.0             # per request, CLI and MCP
-hook_timeout = 6.0         # per request inside the prompt hook, no retries; at most hook_deadline
+hook_timeout = 5.0         # per request inside the prompt hook, no retries; 3 * hook_timeout <= hook_deadline
 hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 past this; max 18,
                            # because the settings.json hook entry runs with timeout 20
 intent_chars = 4000        # inputs are truncated to these before they are sent
