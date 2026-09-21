@@ -28,8 +28,8 @@ class HookTests(unittest.TestCase):
         self.assertEqual(hook.run(["not", "a", "dict"]), "")
 
     def test_success_prints_block(self):
-        with mock.patch.object(hook, "route_intent", return_value=fake_route("undertone")):
-            self.assertIn("undertone", hook.run({"prompt": "transcribe this podcast please"}, Config()))
+        with mock.patch.object(hook, "route_intent", return_value=fake_route("transcriber")):
+            self.assertIn("transcriber", hook.run({"prompt": "transcribe this podcast please"}, Config()))
 
     def test_route_error_is_swallowed(self):
         with mock.patch.object(hook, "route_intent", side_effect=SystemExit(3)):
