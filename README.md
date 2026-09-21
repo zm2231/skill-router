@@ -1,10 +1,9 @@
 # skill-router
 
 Given what a user just asked for, name the one installed skill that should handle it, or say
-none does. It reads every `SKILL.md` the agent harnesses on this machine can load (Claude Code,
-Codex, `~/.agents`, plugins, the current project) and asks TypeSafe's Jev, a model that returns
-calibrated probabilities instead of text, to pick. Two API calls per intent for a roster that
-fits one request.
+whether the request needed a skill at all. It reads every `SKILL.md` the agent harnesses on this
+machine can load (Claude Code, Codex, `~/.agents`, plugins, the current project) and asks
+TypeSafe's Jev, a model that returns calibrated probabilities instead of text, to judge each one.
 
 ## Quick path
 
@@ -18,30 +17,37 @@ skill-router roster                    # every skill it would route over
 skill-router route "turn this podcast into a labeled transcript"
 ```
 
-The last line prints the outcome, then the shortlist with each skill's probability and fit:
+The last line prints the outcome, then every skill's probability of being directly applicable,
+with the rerank probability for the ones that reached the second stage:
 
 ```
 intent: turn this podcast into a labeled transcript
-gate 0.52  rerank winner  model=jev-1.13.0  tokens=12384
 matched: <skill-name>
-  0.970  <skill-name>                             fits 0.94
-  0.030  <runner-up>                              fits 0.16
+  rerank verified; no-match 0.02  model=jev-1.13.0  tokens=31881
+  direct 1.00  <skill-name>                             rerank 0.95
+  direct 0.85  <runner-up>                              rerank 0.00
+  direct 0.26  <third>                                  rerank 0.03
+  direct 0.13  <fourth>
 ```
 
-Add `--json` for the gate scores and ranked shortlist, `--block` for the `<skill_relevance>`
-block an agent would read.
+Add `--json` for the full record, `--block` for the `<skill_relevance>` block an agent would read.
 
 ## How a route is decided
 
-| Step | Request | Result |
-|------|---------|--------|
-| 1. Gate | Three yes/no questions: does this request act on the user's system, would it follow a documented procedure, does prose suffice? | `none_needed` when the combined score is under `gate_floor`; otherwise continue |
-| 2. Wide rank | One Choice over the whole roster, name plus 320 chars of description each | Top `shortlist` (3) skills |
-| 3. Rerank | One Choice over the shortlist with full description and body excerpt, plus an explicit `none-of-these` option; each candidate also gets an absolute "does this skill do this" check | `matched` with one name, or `missing` |
+| Stage | Question | Rule |
+|-------|----------|------|
+| 1. Score | One Score per skill, judged on its own: unrelated / adjacent / direct. Shards of `shard_size` run concurrently | Shortlist every skill with `P(direct) ≥ direct_floor`, capped at `shortlist_cap`; the top `shortlist_min` anyway when none clears it |
+| 2. Rerank | One Choice over the shortlist's full description and body excerpt, plus `none-of-these` | `matched` when the top skill has `P ≥ accept_probability` and beats `none-of-these` by `accept_margin` |
+| 3. Need | Only when nothing verified: one yes/no question, does this request materially require a specialized procedure at all, whether or not one is installed | `none_needed` at `P ≤ need_low`; `likely_missing` at `P ≥ need_high`; `uncertain` between, or whenever the shortlist cap cut candidates |
 
-A winner must clear `fits_threshold` (0.30); in the gray zone between `gate_floor` and
-`gate_threshold` it must clear `gray_fits_threshold` (0.75) instead. Rosters larger than
-`choice_chars` are ranked in chunks and the chunk leaders compete, one extra request per chunk.
+Four outcomes: `matched` names one skill. `none_needed` means ordinary reasoning and tools
+suffice. `likely_missing` means a skill would help and none installed fits, which is the signal
+to go looking for one. `uncertain` is exactly that, and is never turned into advice.
+
+Skills are never ranked against each other in stage 1, so a request that needs nothing cannot
+produce a confident-looking leader, and rosters of any size are scored completely rather than
+in a tournament. Cost is one Score question per skill: roughly 30K Jev input tokens for a
+150-skill roster, about $0.001 at Jev's list price.
 
 ## Where skills come from
 
@@ -63,7 +69,7 @@ of its body. First occurrence of a name wins, in the order above.
 | Surface | Command | Notes |
 |---------|---------|-------|
 | CLI | `skill-router route "<intent>" [--context ...] [--json \| --block]` | Exit 2: missing key or bad config. Exit 3: TypeSafe unreachable or rejected the request. One-line stderr message either way |
-| MCP (stdio) | `skill-router-mcp` | `route_skill(intent, context, cwd)` and `list_skills(cwd)`; call on demand from an agent |
+| MCP (stdio) | `skill-router-mcp` | `route_skill(intent, context, cwd)` returns the full record including the outcome, every skill's `direct` and `rerank` probabilities, `no_match`, and `need`; `list_skills(cwd)` |
 | Claude Code hook | `skill-router-hook` | Fires on every `UserPromptSubmit`, prints a `<skill_relevance>` block into context |
 
 ### Wiring the MCP server
@@ -87,8 +93,9 @@ plus a `suggestion` field holding the `<skill_relevance>` block.
 
 ### The hook costs tokens on every prompt
 
-The hook adds two Jev requests and a suggestion block to every message you send, whether or
-not a skill is relevant. Prefer the MCP tool, which the agent calls only when it wants a route.
+The hook scores the whole roster on every message you send. It injects a block only for a
+verified match and never advice to install something, but the Jev cost is paid either way.
+Prefer the MCP tool, which the agent calls only when it wants a route.
 If you do wire the hook, this is the entry:
 
 ```json
@@ -106,31 +113,34 @@ If you do wire the hook, this is the entry:
 ## Config
 
 `~/.config/skill-router/config.toml`, or the path in `SKILL_ROUTER_CONFIG`. Every key is
-optional. Unknown keys and out-of-range values are rejected at load with the formula in the
-error text.
+optional. Unknown keys and out-of-range values are rejected at load.
 
 ```toml
 model = "jev-latest"
-shortlist = 3
-gate_floor = 0.12          # below: none_needed without a second request
-gate_threshold = 0.30      # above: the request needs a skill; below: gray zone
-fits_threshold = 0.30      # required fit when the gate says a skill is needed
-gray_fits_threshold = 0.75 # required fit in the gray zone
+shard_size = 50            # Score questions per request; shards run concurrently
+parallel = 4               # concurrent shard requests
+direct_floor = 0.20        # P(direct) a skill needs to reach the rerank
+shortlist_cap = 6          # most skills reranked; more over the floor marks the route truncated
+shortlist_min = 3          # reranked anyway when nothing clears the floor
+accept_probability = 0.55  # rerank probability the winner needs
+accept_margin = 0.15       # and its lead over none-of-these
+need_high = 0.70           # need probability at or above which nothing-verified becomes likely_missing
+need_low = 0.30            # at or below which it becomes none_needed; between is uncertain
 timeout = 30.0             # per request, CLI and MCP
 hook_timeout = 6.0         # per request inside the prompt hook, no retries; at most hook_deadline
 hook_deadline = 15.0       # end to end; the hook prints nothing and exits 0 past this; max 18,
                            # because the settings.json hook entry runs with timeout 20
 intent_chars = 4000        # inputs are truncated to these before they are sent
 context_chars = 4000
-wide_description_chars = 320     # description chars per skill in the wide ranking
+wide_description_chars = 320     # description chars per skill in the Score stage
 rerank_description_chars = 1500  # description chars per shortlisted skill in the rerank
 excerpt_chars = 700              # body chars per shortlisted skill in the rerank
-choice_chars = 90000       # bound on one Choice question; must hold two wide entries and the
-                           # whole shortlist with excerpts
 extra_roots = ["~/my-skills"]
 disabled_harnesses = ["codex"]
 exclude = ["some-skill-name"]
 ```
+
+
 
 ## Tests
 
@@ -143,6 +153,7 @@ uv run pytest
 - [ ] `skill-router roster` lists the skills you expect, with the harness you expect
 - [ ] `skill-router route "<a request you know the skill for>"` names that skill
 - [ ] `skill-router route "thanks, looks good"` returns `none_needed`
+- [ ] `skill-router route "<something no installed skill does>"` returns `likely_missing`
 - [ ] The hook is not wired unless you accept the per-prompt cost
 
 ## Next step

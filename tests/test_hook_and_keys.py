@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import io
-import json
 import os
 import stat
 import tempfile
@@ -18,7 +17,7 @@ from skill_router.router import MATCHED, Route
 
 
 def fake_route(winner):
-    return Route("x", 0.9, {}, [], winner, MATCHED, "ok")
+    return Route("x", MATCHED, winner, "ok")
 
 
 class HookTests(unittest.TestCase):

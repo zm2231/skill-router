@@ -23,7 +23,7 @@ skill-router-mcp = "skill_router.mcp_server:main"
 skill-router-hook = "skill_router.hook:main"
 
 [dependency-groups]
-dev = ["pytest>=8"]
+dev = ["pytest>=8", "mypy>=1.14", "ruff>=0.9", "types-PyYAML"]
 
 [build-system]
 requires = ["uv_build>=0.8.21,<0.9.0"]

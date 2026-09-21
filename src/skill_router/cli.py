@@ -9,7 +9,11 @@ import sys
 from dataclasses import asdict
 from pathlib import Path
 
-from typesafe_sdk import TypeSafeAuthenticationError, TypeSafeError, TypeSafePermissionDeniedError
+from typesafe_sdk import (
+    TypeSafeAuthenticationError,
+    TypeSafeError,
+    TypeSafePermissionDeniedError,
+)
 
 from . import client as client_mod
 from .client import KeyStoreError, MissingKeyError
@@ -41,11 +45,14 @@ def cmd_route(args) -> int:
             print(block)
         return 0
     print(f"intent: {r.intent}")
-    print(f"gate {r.gate:.2f}  {r.reason}  model={r.model}  tokens={r.usage.get('input_tokens')}")
     print(f"{r.outcome}: {r.winner or '-'}")
-    for c in r.ranked[:6]:
-        fits = f"fits {c.fits:.2f}" if c.fits is not None else ""
-        print(f"  {c.probability:.3f}  {c.name:<40} {fits}")
+    detail = [r.reason]
+    if r.no_match is not None:
+        detail.append(f"no-match {r.no_match:.2f}")
+    print(f"  {'; '.join(detail)}  model={r.model}  tokens={r.usage.get('input_tokens')}")
+    for c in r.ranked[:8]:
+        rerank = f"rerank {c.rerank:.2f}" if c.rerank is not None else ""
+        print(f"  direct {c.direct:.2f}  {c.name:<40} {rerank}")
     return 0
 
 

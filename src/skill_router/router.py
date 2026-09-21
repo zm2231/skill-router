@@ -1,224 +1,209 @@
-"""Two Jev requests per intent: rank every skill and gate, then rerank the shortlist and verify."""
+"""Score every skill on its own, verify the shortlist against full bodies, then ask whether the
+request needed a skill at all when nothing verified."""
 from __future__ import annotations
 
-import json
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 
-from typesafe_sdk import Choice, Noul, TypeSafeClient
+from typesafe_sdk import (
+    Choice,
+    ChoiceAnswer,
+    Noul,
+    NoulAnswer,
+    Score,
+    ScoreAnswer,
+    TypeSafeClient,
+)
 
 from .config import Config
-from .prompts import CHOICE_INSTRUCTIONS, NO_MATCH, NO_MATCH_CRITERIA, RERANK_INSTRUCTIONS
+from .prompts import (
+    DIRECT,
+    NEED_CRITERIA,
+    NEED_INSTRUCTIONS,
+    NO_MATCH,
+    NO_MATCH_CRITERIA,
+    RERANK_INSTRUCTIONS,
+    SCORE_INSTRUCTIONS,
+    SCORE_LEVELS,
+)
 from .roster import Skill, fit_json
 
-GATE_QUESTIONS = {
-    "acts_on_user_system": (
-        "Is the assistant being asked to act on the user's files, accounts, devices, "
-        "or online services, rather than only to explain or advise?"
-    ),
-    "would_follow_documented_procedure": (
-        "Would a careful expert answering this consult a specific documented procedure "
-        "or set of commands, rather than answering from general understanding?"
-    ),
-    "prose_suffices": (
-        "Could a knowledgeable generalist fully satisfy this request in prose, with "
-        "no tools, no documentation, and no access to the user's files or accounts?"
-    ),
-}
-INVERTED = {"prose_suffices"}
+MATCHED = "matched"
+NONE_NEEDED = "none_needed"
+LIKELY_MISSING = "likely_missing"
+UNCERTAIN = "uncertain"
 
 
 @dataclass
 class Candidate:
     name: str
-    probability: float
-    fits: float | None = None
-
-
-MATCHED = "matched"
-MISSING = "missing"
-NONE_NEEDED = "none_needed"
+    direct: float
+    rerank: float | None = None
 
 
 @dataclass
 class Route:
     intent: str
-    gate: float
-    gate_values: dict[str, float]
-    ranked: list[Candidate]
-    winner: str | None
     outcome: str
+    winner: str | None
     reason: str
-    usage: dict[str, int] = field(default_factory=dict)
+    ranked: list[Candidate] = field(default_factory=list)
+    no_match: float | None = None
+    need: float | None = None
+    truncated: bool = False
+    usage: dict[str, int] = field(default_factory=lambda: {"input_tokens": 0, "output_tokens": 0})
     model: str = ""
-
 
 
 def _state(cfg: Config, intent: str, context: str) -> dict:
     return {"request": intent[:cfg.intent_chars], "recent_context": context[:cfg.context_chars]}
 
 
-def choice_size(question: Choice) -> int:
-    """Serialized size of one Choice question, the quantity choice_chars bounds."""
-    return len(json.dumps(question.model_dump()))
-
-
-def _wide_text(cfg: Config, s: Skill) -> str:
-    return fit_json(s.description, cfg.wide_description_chars)
-
-
-def _cost(cfg: Config, s: Skill) -> int:
-    """Serialized chars one roster entry adds to the wide Choice; never above cfg.max_entry_chars."""
-    return len(json.dumps(s.name)) + len(json.dumps(_wide_text(cfg, s))) + 4
-
-
-def _chunks(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
-    """Split the roster so one Choice never exceeds the per-question budget."""
-    chunks: list[list[Skill]] = [[]]
-    size = 0
-    for s in skills:
-        cost = _cost(cfg, s)
-        if chunks[-1] and size + cost > cfg.wide_capacity:
-            chunks.append([])
-            size = 0
-        chunks[-1].append(s)
-        size += cost
-    return chunks
-
-
-def _top(cfg: Config, by_name: dict[str, Skill], response, keep: int) -> list[Skill]:
-    probs = response.answers["which"].probabilities
-    return [by_name[n] for n, _ in sorted(probs.items(), key=lambda kv: -kv[1])[:keep]]
-
-
-def _wide_questions(cfg: Config, skills: list[Skill], with_gate: bool) -> dict:
-    questions = {
-        "which": Choice(
-            instructions=CHOICE_INSTRUCTIONS,
-            criteria={s.name: _wide_text(cfg, s) for s in skills},
-        )
-    }
-    if with_gate:
-        for key, text in GATE_QUESTIONS.items():
-            questions[f"gate::{key}"] = Noul(instructions=text)
-    return questions
-
-
-@dataclass
-class Wide:
-    probabilities: dict[str, float]
-    gate_values: dict[str, float]
-    model: str
-    input_tokens: int
-    output_tokens: int
-
-
-def rank_wide(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str) -> Wide:
-    """Rank every skill and gate the request. Large rosters are ranked chunk by chunk, then the
-    per-chunk leaders compete once more; the gate rides on the first chunk."""
-    state = _state(cfg, intent, context)
-    chunks = _chunks(cfg, skills)
-    responses = [
-        client.system_one(state=state, questions=_wide_questions(cfg, chunk, i == 0), model=cfg.model)
-        for i, chunk in enumerate(chunks)
-    ]
-    all_responses = list(responses)
-    first = responses[0]
-    gate_values = {
-        k.removeprefix("gate::"): a.noul for k, a in first.answers.items() if k.startswith("gate::")
-    }
-    by_name = {s.name: s for s in skills}
-    keep = cfg.shortlist
-    while len(responses) > 1:
-        leaders = [s for r in responses for s in _top(cfg, by_name, r, keep)]
-        next_chunks = _chunks(cfg, leaders)
-        while len(next_chunks) >= len(responses) and keep > 1:
-            keep -= 1
-            leaders = [s for r in responses for s in _top(cfg, by_name, r, keep)]
-            next_chunks = _chunks(cfg, leaders)
-        round_responses = [
-            client.system_one(state=state, questions=_wide_questions(cfg, chunk, False), model=cfg.model)
-            for chunk in next_chunks
-        ]
-        responses = round_responses
-        all_responses.extend(round_responses)
-    probabilities = responses[0].answers["which"].probabilities
-    return Wide(
-        probabilities=probabilities,
-        gate_values=gate_values,
-        model=first.model,
-        input_tokens=sum((r.usage.input_tokens or 0) for r in all_responses),
-        output_tokens=sum((r.usage.output_tokens or 0) for r in all_responses),
+def _score_question(cfg: Config, s: Skill) -> Score:
+    described = fit_json(s.description, cfg.wide_description_chars)
+    return Score(
+        instructions=f"{SCORE_INSTRUCTIONS} The skill is named '{s.name}' and is described as: {described}",
+        criteria=SCORE_LEVELS,
     )
 
 
-def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], intent: str, context: str):
-    described = {n: fit_json(by_name[n].description, cfg.rerank_description_chars) for n in names}
-    criteria = {n: f"{described[n]}. {fit_json(by_name[n].body, cfg.excerpt_chars)}" for n in names}
-    criteria[NO_MATCH] = NO_MATCH_CRITERIA
-    questions = {
-        "which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria),
-    }
-    for n in names:
-        questions[f"fits::{n}"] = Noul(
-            instructions=(
-                f"Does the skill '{n}' do the specific thing the user's request asks "
-                f"for? It is described as: {described[n]}"
-            )
+def _shards(cfg: Config, skills: list[Skill]) -> list[list[Skill]]:
+    return [skills[i:i + cfg.shard_size] for i in range(0, len(skills), cfg.shard_size)]
+
+
+class _Usage:
+    def __init__(self) -> None:
+        self.input_tokens = 0
+        self.output_tokens = 0
+        self.model = ""
+
+    def add(self, response) -> None:
+        self.input_tokens += response.usage.input_tokens or 0
+        self.output_tokens += response.usage.output_tokens or 0
+        self.model = self.model or response.model
+
+    def as_dict(self) -> dict[str, int]:
+        return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
+
+
+def score_all(client: TypeSafeClient, cfg: Config, skills: list[Skill], state: dict, usage: _Usage) -> list[Candidate]:
+    """P(direct) for every skill, each judged in its own Score question; shards run concurrently."""
+    def ask(shard: list[Skill]):
+        return client.system_one(
+            state=state,
+            questions={s.name: _score_question(cfg, s) for s in shard},
+            model=cfg.model,
         )
-    return client.system_one(state=_state(cfg, intent, context), questions=questions, model=cfg.model)
+
+    shards = _shards(cfg, skills)
+    with ThreadPoolExecutor(max_workers=min(cfg.parallel, len(shards))) as pool:
+        responses = list(pool.map(ask, shards))
+    ranked: list[Candidate] = []
+    for shard, response in zip(shards, responses):
+        usage.add(response)
+        for s in shard:
+            answer = response.answers[s.name]
+            assert isinstance(answer, ScoreAnswer)
+            ranked.append(Candidate(s.name, answer.probabilities.get(DIRECT, 0.0)))
+    ranked.sort(key=lambda c: -c.direct)
+    return ranked
+
+
+def shortlist(cfg: Config, ranked: list[Candidate]) -> tuple[list[Candidate], bool]:
+    """Every candidate over the floor, capped; the top few anyway when none clears it.
+    The flag says the cap cut candidates that had cleared the floor."""
+    cleared = [c for c in ranked if c.direct >= cfg.direct_floor]
+    if not cleared:
+        return ranked[:cfg.shortlist_min], False
+    return cleared[:cfg.shortlist_cap], len(cleared) > cfg.shortlist_cap
+
+
+def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], state: dict, usage: _Usage) -> dict[str, float]:
+    """Choice probabilities over the shortlist's full bodies plus the no-match option."""
+    criteria = {
+        n: f"{fit_json(by_name[n].description, cfg.rerank_description_chars)}. "
+           f"{fit_json(by_name[n].body, cfg.excerpt_chars)}"
+        for n in names
+    }
+    criteria[NO_MATCH] = NO_MATCH_CRITERIA
+    response = client.system_one(
+        state=state,
+        questions={"which": Choice(instructions=RERANK_INSTRUCTIONS, criteria=criteria)},
+        model=cfg.model,
+    )
+    usage.add(response)
+    answer = response.answers["which"]
+    assert isinstance(answer, ChoiceAnswer)
+    return dict(answer.probabilities)
+
+
+def need(client: TypeSafeClient, cfg: Config, state: dict, usage: _Usage) -> float:
+    """P(the request materially requires a specialized procedure), independent of what is installed."""
+    response = client.system_one(
+        state=state,
+        questions={"need": Noul(instructions=NEED_INSTRUCTIONS, criteria=NEED_CRITERIA)},
+        model=cfg.model,
+    )
+    usage.add(response)
+    answer = response.answers["need"]
+    assert isinstance(answer, NoulAnswer)
+    return answer.noul
+
+
+def accepted(cfg: Config, probabilities: dict[str, float]) -> str | None:
+    """The skill the rerank verified, if its probability is high enough and clear of no-match."""
+    winner = max(probabilities, key=lambda k: probabilities[k])
+    if winner == NO_MATCH:
+        return None
+    if probabilities[winner] < cfg.accept_probability:
+        return None
+    if probabilities[winner] - probabilities.get(NO_MATCH, 0.0) < cfg.accept_margin:
+        return None
+    return winner
 
 
 def route(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str = "") -> Route:
-    if not skills:
-        return Route(intent, 0.0, {}, [], None, MISSING, "roster: no skills discovered")
-    by_name = {s.name: s for s in skills}
-    wide = rank_wide(client, cfg, skills, intent, context)
-    ranked = [Candidate(n, p) for n, p in sorted(wide.probabilities.items(), key=lambda kv: -kv[1])]
-    ranked = ranked[:max(12, cfg.shortlist)]
-    values = wide.gate_values
-    oriented = [(1.0 - v) if k in INVERTED else v for k, v in values.items()]
-    gate = sum(oriented) / len(oriented)
-    usage = {"input_tokens": wide.input_tokens, "output_tokens": wide.output_tokens}
+    state = _state(cfg, intent, context)
+    usage = _Usage()
+    ranked: list[Candidate] = []
+    truncated = False
+    no_match: float | None = None
+    reason = "roster: no skills discovered"
 
-    if gate < cfg.gate_floor:
-        return Route(intent, gate, values, ranked, None, NONE_NEEDED,
-                     "gate: request does not need a skill", usage, wide.model)
-    needs_skill = gate >= cfg.gate_threshold
-    required_fit = cfg.fits_threshold if needs_skill else cfg.gray_fits_threshold
+    if skills:
+        by_name = {s.name: s for s in skills}
+        ranked = score_all(client, cfg, skills, state, usage)
+        short, truncated = shortlist(cfg, ranked)
+        probabilities = rerank(client, cfg, by_name, [c.name for c in short], state, usage)
+        no_match = probabilities.get(NO_MATCH)
+        for c in short:
+            c.rerank = probabilities.get(c.name)
+        winner = accepted(cfg, probabilities)
+        if winner:
+            return Route(intent, MATCHED, winner, "rerank verified", ranked, no_match, None, truncated,
+                         usage.as_dict(), usage.model)
+        top = max(probabilities, key=lambda k: probabilities[k])
+        reason = ("no-match chosen" if top == NO_MATCH
+                  else f"{top} at {probabilities[top]:.2f} against no-match {no_match:.2f} did not clear "
+                       f"{cfg.accept_probability:.2f} with margin {cfg.accept_margin:.2f}")
 
-    names = [c.name for c in ranked[:cfg.shortlist]]
-    if not names:
-        return Route(intent, gate, values, ranked, None, MISSING, "roster: nothing to shortlist", usage, wide.model)
-    second = rerank(client, cfg, by_name, names, intent, context)
-    usage["input_tokens"] += second.usage.input_tokens or 0
-    usage["output_tokens"] += second.usage.output_tokens or 0
-    fits = {k.removeprefix("fits::"): a.noul for k, a in second.answers.items() if k.startswith("fits::")}
-    for c in ranked[:cfg.shortlist]:
-        c.fits = fits.get(c.name)
-    winner = second.answers["which"].choice
-    if winner == NO_MATCH or fits.get(winner, 0.0) < required_fit:
-        best = max(fits, key=fits.get)
-        why = ("no-match chosen" if winner == NO_MATCH
-               else f"winner {winner} fits {fits.get(winner, 0.0):.2f} under {required_fit:.2f}")
-        outcome = MISSING if needs_skill else NONE_NEEDED
-        return Route(intent, gate, values, ranked, None, outcome,
-                     f"{why}; nearest {best} at {fits[best]:.2f}", usage, wide.model)
-    return Route(intent, gate, values, ranked, winner, MATCHED, "rerank winner", usage, wide.model)
+    p_need = need(client, cfg, state, usage)
+    if p_need <= cfg.need_low:
+        outcome = NONE_NEEDED
+    elif p_need >= cfg.need_high and not truncated:
+        outcome = LIKELY_MISSING
+    else:
+        outcome = UNCERTAIN
+    reason = f"{reason}; need {p_need:.2f}" + ("; shortlist truncated" if truncated else "")
+    return Route(intent, outcome, None, reason, ranked, no_match, p_need, truncated, usage.as_dict(), usage.model)
 
 
 def suggestion_block(r: Route) -> str:
-    if r.outcome == MATCHED:
-        body = (
-            f"Relevant to the current request: {r.winner}. Load it with the Skill tool before "
-            "proceeding. Ignore this if it does not fit what the user actually asked for."
-        )
-    elif r.outcome == MISSING:
-        nearest = ", ".join(c.name for c in r.ranked[:3])
-        body = (
-            "No installed skill covers this request, though it looks like one would help. "
-            f"Nearest installed: {nearest}. Proceed without a skill and tell the user a skill "
-            "for this is probably worth installing or creating."
-        )
-    else:
+    """The context injection for a hook: only a verified match, never advice to install something."""
+    if r.outcome != MATCHED:
         return ""
-    return f"<skill_relevance>\n{body}\n</skill_relevance>"
+    return (
+        "<skill_relevance>\n"
+        f"Relevant to the current request: {r.winner}. Load it with the Skill tool before proceeding.\n"
+        "</skill_relevance>"
+    )

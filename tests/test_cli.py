@@ -49,7 +49,7 @@ class RosterCommandTests(unittest.TestCase):
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text("---\nname: one\ndescription: does one thing\n---\nbody")
             from skill_router.router import MATCHED, Route
-            fake = Route("x", 0.9, {}, [], "one", MATCHED, "")
+            fake = Route("x", MATCHED, "one", "")
             for argv in (["roster"], ["roster", "--json"], ["route", "x", "--json"], ["route", "x", "--block"]):
                 err = io.StringIO()
                 with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(home / "none.toml")}), \
@@ -82,7 +82,11 @@ class RosterCommandTests(unittest.TestCase):
         self.assertNotIn("Traceback", err.getvalue())
 
     def test_setup_separates_rejected_key_from_outage(self):
-        from typesafe_sdk import TypeSafeAPIConnectionError, TypeSafeAPITimeoutError, TypeSafeAuthenticationError
+        from typesafe_sdk import (
+            TypeSafeAPIConnectionError,
+            TypeSafeAPITimeoutError,
+            TypeSafeAuthenticationError,
+        )
         cases = [
             (TypeSafeAuthenticationError(401, "bad key", {}), 1, "rejected"),
             (TypeSafeAPIConnectionError("refused"), 3, "typesafe:"),

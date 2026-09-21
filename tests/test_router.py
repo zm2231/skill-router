@@ -1,22 +1,23 @@
 from __future__ import annotations
 
+import threading
 import unittest
 from dataclasses import dataclass, field
 
+from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer, Score, ScoreAnswer
+
 from skill_router.config import Config
+from skill_router.prompts import DIRECT
 from skill_router.roster import Skill
-from skill_router.router import MATCHED, MISSING, NO_MATCH, NONE_NEEDED, choice_size, route, suggestion_block
-
-
-@dataclass
-class Choice:
-    choice: str
-    probabilities: dict
-
-
-@dataclass
-class Noul:
-    noul: float
+from skill_router.router import (
+    LIKELY_MISSING,
+    MATCHED,
+    NO_MATCH,
+    NONE_NEEDED,
+    UNCERTAIN,
+    route,
+    suggestion_block,
+)
 
 
 @dataclass
@@ -32,29 +33,34 @@ class Response:
     usage: Usage = field(default_factory=Usage)
 
 
-class FakeClient:
-    """Answers the wide Choice from `wide`, gate nouls from `gate`, and the rerank from `rerank`."""
+def score_answer(direct: float) -> ScoreAnswer:
+    return ScoreAnswer(
+        type="score", score=2 * direct, confidence=1.0,
+        legend={0: "u", 1: "a", 2: "d"},
+        probabilities={0: 1.0 - direct, 1: 0.0, DIRECT: direct},
+    )
 
-    def __init__(self, wide, gate, rerank_choice, fits):
-        self.wide, self.gate, self.rerank_choice, self.fits = wide, gate, rerank_choice, fits
-        self.calls = []
+
+class FakeClient:
+    def __init__(self, direct: dict[str, float], rerank: dict[str, float] | None = None, need: float = 0.0):
+        self.direct, self.rerank, self.need = direct, rerank or {}, need
+        self.calls: list[dict] = []
+        self.threads: set[int] = set()
+        self.lock = threading.Lock()
 
     def system_one(self, state, questions, model=None):
-        self.calls.append(questions)
+        with self.lock:
+            self.calls.append(questions)
+            self.threads.add(threading.get_ident())
         answers = {}
-        which = questions["which"]
-        keys = list(which.criteria.keys())
-        if NO_MATCH in keys:
-            answers["which"] = Choice(self.rerank_choice, {k: 0.0 for k in keys})
-            for k, q in questions.items():
-                if k.startswith("fits::"):
-                    answers[k] = Noul(self.fits[k.removeprefix("fits::")])
-        else:
-            probs = {k: self.wide.get(k, 0.0) for k in keys}
-            answers["which"] = Choice(max(probs, key=probs.get), probs)
-            for k in questions:
-                if k.startswith("gate::"):
-                    answers[k] = Noul(self.gate[k.removeprefix("gate::")])
+        for key, q in questions.items():
+            if isinstance(q, Score):
+                answers[key] = score_answer(self.direct.get(key, 0.0))
+            elif isinstance(q, Choice):
+                probs = {k: self.rerank.get(k, 0.0) for k in q.criteria}
+                answers[key] = ChoiceAnswer(type="choice", choice=max(probs, key=probs.get), confidence=1.0, probabilities=probs)
+            elif isinstance(q, Noul):
+                answers[key] = NoulAnswer(type="noul", noul=self.need, confidence=1.0)
         return Response(answers)
 
 
@@ -62,122 +68,99 @@ def skills(n=5):
     return [Skill(f"s{i}", "claude-code", f"/x/s{i}/SKILL.md", f"skill {i} does thing {i}", f"body {i}") for i in range(n)]
 
 
-NEEDS = {"acts_on_user_system": 0.9, "would_follow_documented_procedure": 0.8, "prose_suffices": 0.1}
-NO_NEED = {"acts_on_user_system": 0.02, "would_follow_documented_procedure": 0.05, "prose_suffices": 0.95}
-GRAY = {"acts_on_user_system": 0.05, "would_follow_documented_procedure": 0.15, "prose_suffices": 0.5}
+def kinds(calls):
+    return ["score" if any(isinstance(q, Score) for q in c.values())
+            else "rerank" if "which" in c else "need" for c in calls]
 
 
 class RouteTests(unittest.TestCase):
-    def test_matched(self):
-        c = FakeClient({"s1": 0.9, "s2": 0.1}, NEEDS, "s1", {"s1": 0.9, "s2": 0.3, "s0": 0.0})
+    def test_matched_needs_two_rounds(self):
+        c = FakeClient({"s1": 0.9, "s2": 0.3}, {"s1": 0.8, "s2": 0.1, NO_MATCH: 0.1})
         r = route(c, Config(), skills(), "do thing 1")
         self.assertEqual((r.outcome, r.winner), (MATCHED, "s1"))
-        self.assertEqual(len(c.calls), 2)
-        self.assertIn(NO_MATCH, c.calls[1]["which"].criteria)
+        self.assertEqual(kinds(c.calls), ["score", "rerank"])
+        self.assertIsNone(r.need)
+        self.assertEqual(r.no_match, 0.1)
         self.assertIn("s1", suggestion_block(r))
 
-    def test_none_needed_skips_rerank(self):
-        c = FakeClient({"s1": 0.9}, NO_NEED, "s1", {})
-        r = route(c, Config(), skills(), "what is a monad")
+    def test_rerank_sees_only_candidates_over_the_floor(self):
+        c = FakeClient({"s1": 0.9, "s2": 0.3, "s3": 0.19}, {"s1": 0.8})
+        route(c, Config(direct_floor=0.2), skills(), "x")
+        self.assertEqual(set(c.calls[1]["which"].criteria), {"s1", "s2", NO_MATCH})
+
+    def test_nothing_over_the_floor_still_reranks_the_top_few(self):
+        c = FakeClient({"s1": 0.1, "s2": 0.05, "s3": 0.02, "s4": 0.01}, {NO_MATCH: 0.9}, need=0.1)
+        r = route(c, Config(shortlist_min=3), skills(), "x")
+        self.assertEqual(set(c.calls[1]["which"].criteria), {"s1", "s2", "s3", NO_MATCH})
         self.assertEqual(r.outcome, NONE_NEEDED)
-        self.assertEqual(len(c.calls), 1)
-        self.assertEqual(suggestion_block(r), "")
 
-    def test_missing_when_no_match_chosen(self):
-        c = FakeClient({"s1": 0.5, "s2": 0.3}, NEEDS, NO_MATCH, {"s1": 0.3, "s2": 0.2, "s0": 0.1})
-        r = route(c, Config(), skills(), "post to mastodon")
-        self.assertEqual((r.outcome, r.winner), (MISSING, None))
-        self.assertIn("No installed skill", suggestion_block(r))
+    def test_shortlist_cap_marks_truncation_and_blocks_missing(self):
+        c = FakeClient({f"s{i}": 0.5 for i in range(5)}, {NO_MATCH: 0.9}, need=0.95)
+        r = route(c, Config(shortlist_cap=3, shortlist_min=1), skills(), "x")
+        self.assertTrue(r.truncated)
+        self.assertEqual(len(c.calls[1]["which"].criteria), 4)
+        self.assertEqual(r.outcome, UNCERTAIN)
 
-    def test_missing_when_winner_fits_weakly(self):
-        c = FakeClient({"s1": 0.9}, NEEDS, "s1", {"s1": 0.2, "s2": 0.1, "s0": 0.0})
+    def test_no_match_then_need_decides(self):
+        for need, outcome in ((0.05, NONE_NEEDED), (0.5, UNCERTAIN), (0.9, LIKELY_MISSING)):
+            c = FakeClient({"s1": 0.5}, {NO_MATCH: 0.9, "s1": 0.1}, need=need)
+            r = route(c, Config(), skills(), "x")
+            self.assertEqual(r.outcome, outcome, need)
+            self.assertEqual(kinds(c.calls), ["score", "rerank", "need"])
+            self.assertEqual(r.need, need)
+            self.assertIsNone(r.winner)
+            self.assertEqual(suggestion_block(r), "")
+
+    def test_winner_below_accept_probability_is_not_verified(self):
+        c = FakeClient({"s1": 0.9}, {"s1": 0.5, NO_MATCH: 0.1}, need=0.9)
+        r = route(c, Config(accept_probability=0.55), skills(), "x")
+        self.assertEqual(r.outcome, LIKELY_MISSING)
+        self.assertIn("did not clear", r.reason)
+
+    def test_winner_without_margin_over_no_match_is_not_verified(self):
+        c = FakeClient({"s1": 0.9}, {"s1": 0.56, NO_MATCH: 0.44}, need=0.1)
+        self.assertEqual(route(c, Config(accept_margin=0.15), skills(), "x").outcome, NONE_NEEDED)
+        c = FakeClient({"s1": 0.9}, {"s1": 0.6, NO_MATCH: 0.4})
+        self.assertEqual(route(c, Config(accept_margin=0.15), skills(), "x").winner, "s1")
+
+    def test_rerank_probabilities_are_recorded(self):
+        c = FakeClient({"s1": 0.9, "s2": 0.4}, {"s1": 0.7, "s2": 0.2, NO_MATCH: 0.1})
         r = route(c, Config(), skills(), "x")
-        self.assertEqual(r.outcome, MISSING)
+        by = {x.name: x for x in r.ranked}
+        self.assertEqual((by["s1"].rerank, by["s2"].rerank), (0.7, 0.2))
+        self.assertIsNone(by["s0"].rerank)
 
-    def test_gray_zone_requires_strong_fit(self):
-        weak = FakeClient({"s1": 0.9}, GRAY, "s1", {"s1": 0.5, "s2": 0.1, "s0": 0.0})
-        self.assertEqual(route(weak, Config(), skills(), "x").outcome, NONE_NEEDED)
-        strong = FakeClient({"s1": 0.9}, GRAY, "s1", {"s1": 0.95, "s2": 0.1, "s0": 0.0})
-        self.assertEqual(route(strong, Config(), skills(), "x").outcome, MATCHED)
+    def test_empty_roster_asks_need_only(self):
+        c = FakeClient({}, need=0.9)
+        r = route(c, Config(), [], "x")
+        self.assertEqual(r.outcome, LIKELY_MISSING)
+        self.assertEqual(kinds(c.calls), ["need"])
+        self.assertIsNone(r.no_match)
 
-    def test_empty_roster(self):
-        c = FakeClient({}, NEEDS, "", {})
-        self.assertEqual(route(c, Config(), [], "x").outcome, MISSING)
-        self.assertEqual(c.calls, [])
+    def test_every_skill_is_scored_across_shards(self):
+        many = skills(120)
+        c = FakeClient({"s77": 0.9}, {"s77": 0.9})
+        r = route(c, Config(shard_size=50, parallel=4), many, "thing 77")
+        self.assertEqual(r.winner, "s77")
+        score_calls = [x for x in c.calls if any(isinstance(q, Score) for q in x.values())]
+        self.assertEqual(sorted(len(x) for x in score_calls), [20, 50, 50])
+        self.assertEqual({k for x in score_calls for k in x}, {s.name for s in many})
+        self.assertEqual(len(r.ranked), 120)
 
-    def test_roster_smaller_than_shortlist(self):
-        c = FakeClient({"s0": 0.7, "s1": 0.3}, NEEDS, "s0", {"s0": 0.9, "s1": 0.2})
-        r = route(c, Config(shortlist=3), skills(2), "x")
-        self.assertEqual(r.winner, "s0")
+    def test_usage_sums_every_request(self):
+        c = FakeClient({"s1": 0.5}, {NO_MATCH: 0.9}, need=0.5)
+        r = route(c, Config(shard_size=2), skills(5), "x")
+        self.assertEqual(r.usage, {"input_tokens": 500, "output_tokens": 50})
+        self.assertEqual(r.model, "jev-test")
 
-    def test_every_wide_request_stays_within_bound(self):
-        cfg = Config(choice_chars=1000, wide_description_chars=20, shortlist=3, rerank_description_chars=10, excerpt_chars=1)
-        many = skills(80)
-        wide = {s.name: 0.0 for s in many}
-        wide["s33"] = 0.9
-        c = FakeClient(wide, NEEDS, "s33", {"s33": 0.9, "s0": 0.1, "s1": 0.1, "s2": 0.1, "s3": 0.1})
-        r = route(c, cfg, many, "thing 33")
-        self.assertEqual(r.winner, "s33")
-        wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
-        self.assertGreater(len(wide_calls), 3)
-        for q in c.calls:
-            self.assertLessEqual(choice_size(q["which"]), cfg.choice_chars, list(q["which"].criteria))
-        self.assertEqual(sum(1 for q in wide_calls if any(k.startswith("gate::") for k in q)), 1)
-
-    def test_chunk_too_small_for_one_entry_is_rejected(self):
-        from skill_router.config import ConfigError
-        with self.assertRaises(ConfigError):
-            Config(choice_chars=400, wide_description_chars=320)
-        from skill_router.config import WIDE_OVERHEAD
-        with self.assertRaises(ConfigError):
-            Config(choice_chars=WIDE_OVERHEAD + 2 * (128 + 320 + 8) - 1, wide_description_chars=320,
-                   rerank_description_chars=1, excerpt_chars=1)
-        Config(choice_chars=WIDE_OVERHEAD + 2 * (128 + 320 + 8), wide_description_chars=320,
-               rerank_description_chars=1, excerpt_chars=1)
-
-    def test_chunking_merges_leaders(self):
-        cfg = Config(choice_chars=1000, wide_description_chars=20, shortlist=2, rerank_description_chars=10, excerpt_chars=1)
-        many = skills(100)
-        wide = {s.name: 0.0 for s in many}
-        wide["s7"] = 0.9
-        c = FakeClient(wide, NEEDS, "s7", {"s7": 0.9, "s0": 0.1, "s1": 0.1, "s3": 0.1})
-        r = route(c, cfg, many, "thing 7")
-        self.assertEqual(r.winner, "s7")
-        wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
-        self.assertGreater(len(wide_calls), 2)
-        self.assertEqual(sum(1 for q in wide_calls if any(k.startswith("gate::") for k in q)), 1)
-
-    def test_longest_allowed_names_stay_bounded_and_terminate(self):
-        from skill_router.roster import NAME_CHARS
-        cfg = Config(choice_chars=1000, wide_description_chars=10, shortlist=3, rerank_description_chars=10, excerpt_chars=1)
-        many = [Skill(f"n{i}".ljust(NAME_CHARS, "x"), "codex", f"/x/{i}/SKILL.md", '"\n' * 50, "b") for i in range(20)]
-        target = many[5].name
-        wide = {s.name: 0.0 for s in many}
-        wide[target] = 0.9
-        c = FakeClient(wide, NEEDS, target, {s.name: 0.1 for s in many} | {target: 0.9})
-        r = route(c, cfg, many, "thing 5")
-        self.assertEqual(r.winner, target)
-        wide_calls = [q for q in c.calls if NO_MATCH not in q["which"].criteria]
-        self.assertGreater(len(wide_calls), 4)
-        for q in c.calls:
-            self.assertLessEqual(choice_size(q["which"]), cfg.choice_chars, list(q["which"].criteria))
-
-    def test_rerank_request_stays_within_bound(self):
-        from skill_router.roster import BODY_CHARS, NAME_CHARS
-        cfg = Config(shortlist=3)
-        many = [
-            Skill(f"n{i}".ljust(NAME_CHARS, "x"), "codex", "/x", '"\t' * cfg.rerank_description_chars, "\\" * BODY_CHARS)
-            for i in range(4)
-        ]
-        target = many[2].name
-        wide = {s.name: 0.0 for s in many}
-        wide[target] = 0.9
-        c = FakeClient(wide, NEEDS, target, {s.name: 0.1 for s in many} | {target: 0.9})
-        self.assertEqual(route(c, cfg, many, "x").winner, target)
-        rerank_calls = [q for q in c.calls if NO_MATCH in q["which"].criteria]
-        self.assertEqual(len(rerank_calls), 1)
-        self.assertLessEqual(choice_size(rerank_calls[0]["which"]), cfg.max_rerank_chars)
-        self.assertLessEqual(cfg.max_rerank_chars, cfg.choice_chars)
+    def test_score_question_describes_the_skill(self):
+        c = FakeClient({"s1": 0.9}, {"s1": 0.9})
+        route(c, Config(wide_description_chars=12), skills(2), "x")
+        q = c.calls[0]["s1"]
+        self.assertIn("'s1'", q.instructions)
+        self.assertIn("skill 1 does", q.instructions)
+        self.assertNotIn("thing 1", q.instructions)
+        self.assertEqual(len(q.criteria), 3)
 
 
 if __name__ == "__main__":

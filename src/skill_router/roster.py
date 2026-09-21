@@ -3,9 +3,9 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Iterator
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterator
 
 import yaml
 
@@ -60,8 +60,7 @@ def parse_skill_md(text: str) -> tuple[dict[str, str], str]:
 def _skill_dirs(root: Path) -> Iterator[Path]:
     if not root.is_dir():
         return
-    for md in sorted(root.glob("*/SKILL.md")):
-        yield md
+    yield from sorted(root.glob("*/SKILL.md"))
 
 
 def _plugin_skill_dirs(cache: Path) -> Iterator[tuple[str, Path]]:

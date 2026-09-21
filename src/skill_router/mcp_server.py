@@ -16,16 +16,17 @@ server = MCPServer(
     "skill-router",
     instructions=(
         "Call route_skill with what the user is trying to do before choosing a skill. "
-        "It returns at most one skill name that fits, chosen across every skill installed on "
-        "this machine, with the runner-ups and their fit scores."
+        "It returns at most one verified skill name, chosen across every skill installed on "
+        "this machine, or says whether the request needs a skill that is not installed."
     ),
 )
 
 
 @server.tool()
 def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
-    """Pick the one installed skill that fits an intent, or none.
+    """Pick the one installed skill that fits an intent, or say why none does.
 
+    outcome is one of matched, none_needed, likely_missing, uncertain.
     intent: what the user is trying to do, in their words.
     context: optional recent conversation or task context that sharpens the intent.
     cwd: optional working directory, so project-local skills are included.
@@ -35,7 +36,7 @@ def route_skill(intent: str, context: str = "", cwd: str = "") -> dict:
     except (MissingKeyError, ConfigError, TypeSafeError, OSError) as exc:
         return {"error": str(exc), "outcome": "error"}
     out = asdict(r)
-    out["ranked"] = out["ranked"][:6]
+    out["ranked"] = out["ranked"][:8]
     out["suggestion"] = suggestion_block(r)
     return out
 
