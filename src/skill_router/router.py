@@ -2,18 +2,12 @@
 request needed a skill at all when nothing verified."""
 from __future__ import annotations
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from typing import Any, Protocol
 
-from typesafe_sdk import (
-    Choice,
-    ChoiceAnswer,
-    Noul,
-    NoulAnswer,
-    Score,
-    ScoreAnswer,
-    TypeSafeClient,
-)
+from typesafe_sdk import Choice, ChoiceAnswer, Noul, NoulAnswer, Score, ScoreAnswer
 
 from .config import Config
 from .prompts import (
@@ -27,6 +21,13 @@ from .prompts import (
     SCORE_LEVELS,
 )
 from .roster import Skill, fit_json
+
+
+class SystemOne(Protocol):
+    """The one TypeSafeClient method the router needs."""
+
+    def system_one(self, state: Any, questions: Mapping[str, Any], *, model: str | None = None) -> Any: ...
+
 
 MATCHED = "matched"
 NONE_NEEDED = "none_needed"
@@ -86,7 +87,7 @@ class _Usage:
         return {"input_tokens": self.input_tokens, "output_tokens": self.output_tokens}
 
 
-def score_all(client: TypeSafeClient, cfg: Config, skills: list[Skill], state: dict, usage: _Usage) -> list[Candidate]:
+def score_all(client: SystemOne, cfg: Config, skills: list[Skill], state: dict, usage: _Usage) -> list[Candidate]:
     """P(direct) for every skill, each judged in its own Score question; shards run concurrently."""
     def ask(shard: list[Skill]):
         return client.system_one(
@@ -118,7 +119,7 @@ def shortlist(cfg: Config, ranked: list[Candidate]) -> tuple[list[Candidate], bo
     return cleared[:cfg.shortlist_cap], len(cleared) > cfg.shortlist_cap
 
 
-def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names: list[str], state: dict, usage: _Usage) -> dict[str, float]:
+def rerank(client: SystemOne, cfg: Config, by_name: dict[str, Skill], names: list[str], state: dict, usage: _Usage) -> dict[str, float]:
     """Choice probabilities over the shortlist's full bodies plus the no-match option."""
     criteria = {
         n: f"{fit_json(by_name[n].description, cfg.rerank_description_chars)}. "
@@ -137,7 +138,7 @@ def rerank(client: TypeSafeClient, cfg: Config, by_name: dict[str, Skill], names
     return dict(answer.probabilities)
 
 
-def need(client: TypeSafeClient, cfg: Config, state: dict, usage: _Usage) -> float:
+def need(client: SystemOne, cfg: Config, state: dict, usage: _Usage) -> float:
     """P(the request materially requires a specialized procedure), independent of what is installed."""
     response = client.system_one(
         state=state,
@@ -162,7 +163,7 @@ def accepted(cfg: Config, probabilities: dict[str, float]) -> str | None:
     return winner
 
 
-def route(client: TypeSafeClient, cfg: Config, skills: list[Skill], intent: str, context: str = "") -> Route:
+def route(client: SystemOne, cfg: Config, skills: list[Skill], intent: str, context: str = "") -> Route:
     state = _state(cfg, intent, context)
     usage = _Usage()
     ranked: list[Candidate] = []

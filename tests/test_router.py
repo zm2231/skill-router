@@ -48,7 +48,7 @@ class FakeClient:
         self.threads: set[int] = set()
         self.lock = threading.Lock()
 
-    def system_one(self, state, questions, model=None):
+    def system_one(self, state, questions, *, model=None, **kwargs):
         with self.lock:
             self.calls.append(questions)
             self.threads.add(threading.get_ident())
@@ -58,9 +58,9 @@ class FakeClient:
                 answers[key] = score_answer(self.direct.get(key, 0.0))
             elif isinstance(q, Choice):
                 probs = {k: self.rerank.get(k, 0.0) for k in q.criteria}
-                answers[key] = ChoiceAnswer(type="choice", choice=max(probs, key=probs.get), confidence=1.0, probabilities=probs)
+                answers[key] = ChoiceAnswer(type="choice", choice=max(probs, key=lambda k: probs[k]), confidence=1.0, probabilities=probs)
             elif isinstance(q, Noul):
-                answers[key] = NoulAnswer(type="noul", noul=self.need, confidence=1.0)
+                answers[key] = NoulAnswer(type="noul", noul=self.need)
         return Response(answers)
 
 
