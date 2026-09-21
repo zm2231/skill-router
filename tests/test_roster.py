@@ -37,6 +37,15 @@ class DiscoverTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
+    def discover(self, cwd=None, **kw):
+        roots = {
+            "claude-code": str(self.home / ".claude/skills"),
+            "codex": str(self.home / ".codex/skills"),
+            "agents": str(self.home / ".agents/skills"),
+        }
+        return discover(cwd, roots=roots | kw.pop("roots", {}),
+                        plugin_cache=kw.pop("plugin_cache", str(self.home / ".claude/plugins/cache")), **kw)
+
     def write(self, rel: str, desc: str = "d", body: str = "b"):
         p = self.home / rel / "SKILL.md"
         p.parent.mkdir(parents=True, exist_ok=True)
@@ -51,27 +60,45 @@ class DiscoverTests(unittest.TestCase):
         proj = self.home / "proj" / "sub"
         proj.mkdir(parents=True)
         self.write("proj/.claude/skills/dup", "project")
-        found = {s.name: s for s in discover(self.home, proj)}
+        found = {s.name: s for s in self.discover(proj)}
         self.assertEqual(found["dup"].description, "project")
         self.assertEqual(found["plug:inner"].harness, "claude-code-plugin")
         self.assertEqual(set(found), {"dup", "only-codex", "only-agents", "plug:inner"})
-        self.assertEqual({s.name: s for s in discover(self.home, None)}["dup"].harness, "claude-code")
+        self.assertEqual({s.name: s for s in self.discover()}["dup"].harness, "claude-code")
 
     def test_body_fallback_description_and_filters(self):
         (self.home / ".claude/skills/bare").mkdir(parents=True)
         (self.home / ".claude/skills/bare/SKILL.md").write_text("# Title\nfirst words of body")
         self.write(".claude/skills/skip")
-        found = {s.name: s for s in discover(self.home, None, exclude=["skip"])}
+        found = {s.name: s for s in self.discover(exclude=["skip"])}
         self.assertEqual(found["bare"].description, "Title first words of body")
         self.assertNotIn("skip", found)
-        self.assertEqual(discover(self.home, None, disabled_harnesses=["claude-code"]), [])
+        self.assertEqual(self.discover(disabled_harnesses=["claude-code"]), [])
+
+    def test_configured_roots_are_recursive_and_disableable(self):
+        self.write("pi/skills/flat")
+        self.write("pi/skills/group/nested")
+        self.write(".codex/skills/only-codex")
+        found = {s.name: s.harness for s in self.discover(roots={"pi": str(self.home / "pi/skills")})}
+        self.assertEqual(found, {"flat": "pi", "nested": "pi", "only-codex": "codex"})
+        found = self.discover(roots={"pi": str(self.home / "pi/skills")}, disabled_harnesses=["codex", "pi"])
+        self.assertEqual(found, [])
+        self.assertEqual(self.discover(roots={"codex": ""}), [])
+
+    def test_plugin_cache_and_project_dir_can_be_turned_off(self):
+        self.write(".claude/plugins/cache/market/plug/1.0.0/skills/inner")
+        proj = self.home / "proj"
+        self.write("proj/.claude/skills/local")
+        self.assertEqual([s.name for s in self.discover(proj)], ["local", "plug:inner"])
+        self.assertEqual(self.discover(proj, plugin_cache="", project_skills=""), [])
+        self.assertEqual([s.name for s in self.discover(proj, disabled_harnesses=["project", "claude-code-plugin"])], [])
 
     def test_unreadable_skill_is_skipped(self):
         self.write(".claude/skills/good")
         dangling = self.home / ".claude/skills/gone/SKILL.md"
         dangling.parent.mkdir(parents=True)
         dangling.symlink_to(self.home / "nowhere")
-        self.assertEqual([s.name for s in discover(self.home, None)], ["good"])
+        self.assertEqual([s.name for s in self.discover()], ["good"])
 
     def test_fit_json_bounds_escaped_text(self):
         from skill_router.roster import fit_json, json_len
@@ -88,7 +115,7 @@ class DiscoverTests(unittest.TestCase):
         from skill_router.roster import NAME_CHARS
         self.write(f".claude/skills/{'a' * NAME_CHARS}")
         self.write(f".claude/skills/{'b' * (NAME_CHARS + 1)}")
-        self.assertEqual([s.name for s in discover(self.home, None)], ["a" * NAME_CHARS])
+        self.assertEqual([s.name for s in self.discover()], ["a" * NAME_CHARS])
 
 
 if __name__ == "__main__":

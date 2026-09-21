@@ -19,7 +19,7 @@ class RosterCommandTests(unittest.TestCase):
             skill = home / ".claude" / "skills" / "one"
             skill.mkdir(parents=True)
             (skill / "SKILL.md").write_text("---\nname: one\ndescription: does one thing\n---\nbody")
-            with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(home / "none.toml")}), \
+            with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(home / "none.toml"), "HOME": str(home)}), \
                  mock.patch("pathlib.Path.home", return_value=home):
                 out = io.StringIO()
                 with redirect_stdout(out):
@@ -52,7 +52,7 @@ class RosterCommandTests(unittest.TestCase):
             fake = Route("x", MATCHED, "one", "")
             for argv in (["roster"], ["roster", "--json"], ["route", "x", "--json"], ["route", "x", "--block"]):
                 err = io.StringIO()
-                with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(home / "none.toml")}), \
+                with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(home / "none.toml"), "HOME": str(home)}), \
                      mock.patch("pathlib.Path.home", return_value=home), \
                      mock.patch.object(cli, "route_intent", return_value=fake), \
                      mock.patch.object(cli, "suggestion_block", return_value="block"), \

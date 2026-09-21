@@ -14,7 +14,9 @@ from .router import Route, route
 def roster(cfg: Config, cwd: Path | None) -> list[Skill]:
     return discover(
         cwd=cwd,
-        extra_roots=cfg.extra_roots,
+        roots=cfg.roots,
+        plugin_cache=cfg.plugin_cache,
+        project_skills=cfg.project_skills,
         disabled_harnesses=cfg.disabled_harnesses,
         exclude=cfg.exclude,
     )

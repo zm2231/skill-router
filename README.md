@@ -51,18 +51,29 @@ in a tournament. Cost is one Score question per skill: roughly 30K Jev input tok
 
 ## Where skills come from
 
-| Source | Path | Name |
-|--------|------|------|
+Every root is a directory searched recursively for `SKILL.md`. The defaults:
+
+| Harness | Root | Name |
+|---------|------|------|
 | project | nearest `.claude/skills/` walking up from `cwd` | directory name |
 | claude-code | `~/.claude/skills/` | directory name |
 | codex | `~/.codex/skills/` | directory name |
 | agents | `~/.agents/skills/` | directory name |
-| extra | `extra_roots` in config | directory name |
 | claude-code-plugin | `~/.claude/plugins/cache/*/*/*/skills/` | `plugin:skill` |
 
-Each entry is `<dir>/*/SKILL.md`. The name is the directory, not the frontmatter `name:`. Only
-the frontmatter `description` is used for ranking; a skill without one gets the first 200 chars
-of its body. First occurrence of a name wins, in the order above.
+Add your own roots, or repoint the defaults, in the config's `[roots]` table; the harness name
+is whatever key you give it. Drop a default with `disabled_harnesses`, or set its path to `""`.
+`project_skills` and `plugin_cache` are the two special cases and can each be set to `""`.
+
+```toml
+[roots]
+pi = "/path/to/pi/skills"          # new root, harness "pi"
+codex = "~/somewhere/else/skills"  # repointed default
+```
+
+The skill's name is the directory holding `SKILL.md`, not the frontmatter `name:`. Only the
+frontmatter `description` is used for scoring; a skill without one gets the first 200 chars of
+its body. First occurrence of a name wins, in the order above.
 
 ## Surfaces
 
@@ -135,9 +146,13 @@ context_chars = 4000
 wide_description_chars = 320     # description chars per skill in the Score stage
 rerank_description_chars = 1500  # description chars per shortlisted skill in the rerank
 excerpt_chars = 700              # body chars per shortlisted skill in the rerank
-extra_roots = ["~/my-skills"]
-disabled_harnesses = ["codex"]
+plugin_cache = "~/.claude/plugins/cache"  # "" to skip Claude Code plugins
+project_skills = ".claude/skills"         # walked up from cwd; "" to skip
+disabled_harnesses = ["codex"]            # any harness name, including project and claude-code-plugin
 exclude = ["some-skill-name"]
+
+[roots]                                   # merged over the defaults; see "Where skills come from"
+pi = "~/pi/skills"
 ```
 
 

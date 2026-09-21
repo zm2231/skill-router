@@ -7,6 +7,8 @@ import tomllib
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from .roster import DEFAULT_PLUGIN_CACHE, DEFAULT_PROJECT_SKILLS
+
 HOOK_CEILING = 18.0
 
 INTEGER_FIELDS = (
@@ -49,7 +51,9 @@ class Config:
     hook_deadline: float = 15.0
     intent_chars: int = 4_000
     context_chars: int = 4_000
-    extra_roots: list[str] = field(default_factory=list)
+    roots: dict[str, str] = field(default_factory=dict)
+    plugin_cache: str = DEFAULT_PLUGIN_CACHE
+    project_skills: str = DEFAULT_PROJECT_SKILLS
     disabled_harnesses: list[str] = field(default_factory=list)
     exclude: list[str] = field(default_factory=list)
 
@@ -84,10 +88,17 @@ class Config:
         problems: list[str] = []
         if not isinstance(self.model, str) or not self.model.strip():
             problems.append("model must be a non-empty string")
-        for name in ("extra_roots", "disabled_harnesses", "exclude"):
+        for name in ("disabled_harnesses", "exclude"):
             v = getattr(self, name)
             if not isinstance(v, list) or not all(isinstance(x, str) for x in v):
                 problems.append(f"{name} must be a list of strings")
+        if not isinstance(self.roots, dict) or not all(
+            isinstance(k, str) and k and isinstance(v, str) for k, v in self.roots.items()
+        ):
+            problems.append("roots must be a table of name = \"directory\"")
+        for name in ("plugin_cache", "project_skills"):
+            if not isinstance(getattr(self, name), str):
+                problems.append(f"{name} must be a string")
         for name in INTEGER_FIELDS:
             if isinstance(getattr(self, name), bool) or not isinstance(getattr(self, name), int):
                 problems.append(f"{name} must be an integer")

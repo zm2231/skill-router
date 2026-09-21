@@ -52,7 +52,8 @@ if __name__ == "__main__":
 
 class ConfigTypeTests(unittest.TestCase):
     def test_list_fields_must_be_string_lists(self):
-        for bad in (dict(extra_roots=[1]), dict(disabled_harnesses=1), dict(exclude="x"), dict(exclude=[None])):
+        for bad in (dict(roots=[1]), dict(roots={"a": 1}), dict(roots={"": "x"}), dict(plugin_cache=1), dict(project_skills=None),
+                    dict(disabled_harnesses=1), dict(exclude="x"), dict(exclude=[None])):
             with self.assertRaises(ConfigError, msg=bad):
                 Config(**bad)
 
@@ -65,7 +66,7 @@ class ConfigTypeTests(unittest.TestCase):
     def test_load_names_path_for_list_type(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "config.toml"
-            path.write_text("extra_roots = [1]\n")
+            path.write_text("roots = [1]\n")
             with mock.patch.dict(os.environ, {"SKILL_ROUTER_CONFIG": str(path)}):
                 with self.assertRaises(ConfigError) as ctx:
                     Config.load()

@@ -57,13 +57,22 @@ def parse_skill_md(text: str) -> tuple[dict[str, str], str]:
     return fields, body
 
 
-def _skill_dirs(root: Path) -> Iterator[Path]:
+DEFAULT_ROOTS = {
+    "claude-code": "~/.claude/skills",
+    "codex": "~/.codex/skills",
+    "agents": "~/.agents/skills",
+}
+DEFAULT_PLUGIN_CACHE = "~/.claude/plugins/cache"
+DEFAULT_PROJECT_SKILLS = ".claude/skills"
+
+
+def _skill_files(root: Path) -> Iterator[Path]:
     if not root.is_dir():
         return
-    yield from sorted(root.glob("*/SKILL.md"))
+    yield from sorted(root.rglob("SKILL.md"))
 
 
-def _plugin_skill_dirs(cache: Path) -> Iterator[tuple[str, Path]]:
+def _plugin_skill_files(cache: Path) -> Iterator[tuple[str, Path]]:
     if not cache.is_dir():
         return
     for md in sorted(cache.glob("*/*/*/skills/*/SKILL.md")):
@@ -71,37 +80,40 @@ def _plugin_skill_dirs(cache: Path) -> Iterator[tuple[str, Path]]:
         yield plugin, md
 
 
-def harness_sources(home: Path, cwd: Path | None, extra_roots: list[str]) -> list[tuple[str, Path]]:
+def harness_sources(
+    roots: dict[str, str],
+    cwd: Path | None,
+    project_skills: str,
+    disabled_harnesses: list[str],
+) -> list[tuple[str, Path]]:
+    """Named roots in scan order: the project's own skills first, then every configured root."""
+    disabled = set(disabled_harnesses)
     sources: list[tuple[str, Path]] = []
-    if cwd:
+    if cwd and project_skills and "project" not in disabled:
         for ancestor in [cwd, *cwd.parents]:
-            project = ancestor / ".claude" / "skills"
+            project = ancestor / project_skills
             if project.is_dir():
                 sources.append(("project", project))
                 break
-    sources += [
-        ("claude-code", home / ".claude" / "skills"),
-        ("codex", home / ".codex" / "skills"),
-        ("agents", home / ".agents" / "skills"),
-    ]
-    sources += [("extra", Path(r).expanduser()) for r in extra_roots]
+    sources += [(name, Path(path).expanduser()) for name, path in roots.items() if name not in disabled and path]
     return sources
 
 
 def discover(
-    home: Path | None = None,
     cwd: Path | None = None,
-    extra_roots: list[str] | None = None,
+    roots: dict[str, str] | None = None,
+    plugin_cache: str | None = DEFAULT_PLUGIN_CACHE,
+    project_skills: str = DEFAULT_PROJECT_SKILLS,
     disabled_harnesses: list[str] | None = None,
     exclude: list[str] | None = None,
 ) -> list[Skill]:
-    home = home or Path.home()
-    disabled = set(disabled_harnesses or [])
+    roots = DEFAULT_ROOTS | (roots or {})
+    disabled = list(disabled_harnesses or [])
     excluded = set(exclude or [])
     seen: dict[str, Skill] = {}
 
     def add(name: str, harness: str, md: Path) -> None:
-        if name in seen or name in excluded or harness in disabled or json_len(name) > NAME_CHARS:
+        if name in seen or name in excluded or json_len(name) > NAME_CHARS:
             return
         try:
             text = md.read_text(encoding="utf-8", errors="replace")
@@ -119,11 +131,12 @@ def discover(
             body=body[:BODY_CHARS],
         )
 
-    for harness, root in harness_sources(home, cwd, extra_roots or []):
-        for md in _skill_dirs(root):
+    for harness, root in harness_sources(roots, cwd, project_skills, disabled):
+        for md in _skill_files(root):
             add(md.parent.name, harness, md)
-    for plugin, md in _plugin_skill_dirs(home / ".claude" / "plugins" / "cache"):
-        add(f"{plugin}:{md.parent.name}", "claude-code-plugin", md)
+    if plugin_cache and "claude-code-plugin" not in disabled:
+        for plugin, md in _plugin_skill_files(Path(plugin_cache).expanduser()):
+            add(f"{plugin}:{md.parent.name}", "claude-code-plugin", md)
     return sorted(seen.values(), key=lambda s: s.name)
 
 
