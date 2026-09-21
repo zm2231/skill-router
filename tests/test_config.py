@@ -71,6 +71,10 @@ class ConfigTypeTests(unittest.TestCase):
                 with self.assertRaises(ConfigError, msg=bad) as ctx:
                     Config(**bad)
                 self.assertIn("not a directory", str(ctx.exception))
+            broken = Path(d) / "dangling"
+            broken.symlink_to(Path(d) / "gone")
+            with self.assertRaises(ConfigError):
+                Config(roots={"pi": str(broken)})
             Config(roots={"pi": str(Path(d) / "missing")}, plugin_cache="")
 
     def test_load_names_path_for_list_type(self):

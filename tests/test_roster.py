@@ -95,6 +95,9 @@ class DiscoverTests(unittest.TestCase):
         (self.home / "pi/skills").write_text("x")
         with self.assertRaises(NotADirectoryError):
             self.discover(roots={"pi": str(self.home / "pi/skills")})
+        (self.home / "dangling").symlink_to(self.home / "gone")
+        with self.assertRaises(NotADirectoryError):
+            self.discover(roots={"pi": str(self.home / "dangling")})
 
     def test_plugin_cache_and_project_dir_can_be_turned_off(self):
         self.write(".claude/plugins/cache/market/plug/1.0.0/skills/inner")

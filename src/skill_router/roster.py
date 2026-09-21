@@ -72,7 +72,7 @@ def check_source_dir(path: str | Path) -> Path | None:
     if not path:
         return None
     expanded = Path(path).expanduser()
-    if not expanded.exists():
+    if not expanded.exists() and not expanded.is_symlink():
         return None
     if not expanded.is_dir():
         raise NotADirectoryError(f"{expanded} is not a directory")

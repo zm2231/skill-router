@@ -37,7 +37,9 @@ def route_intent(
     skills = roster(cfg, cwd)
     timeout, retry = cfg.timeout, None
     if deadline is not None:
-        remaining = max(deadline - (time.monotonic() - started), 0.0)
+        remaining = deadline - (time.monotonic() - started)
+        if remaining <= 0:
+            raise TimeoutError(f"discovering skills used the whole {deadline:g}s deadline")
         timeout = min(cfg.hook_timeout, remaining / request_rounds(cfg, len(skills)))
         retry = RetryPolicy(max_retries=0, timeout=timeout)
     with make_client(cfg.model, timeout, retry) as client:

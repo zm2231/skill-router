@@ -73,6 +73,11 @@ class HookTests(unittest.TestCase):
         self.assertLessEqual(built[1][0], 5.0)
         self.assertGreater(built[1][0], 4.5)
         self.assertEqual(built[2], (cfg.timeout, None))
+        with mock.patch.object(service, "roster", return_value=many), \
+             mock.patch.object(service, "make_client", side_effect=fake_client):
+            with self.assertRaises(TimeoutError):
+                service.route_intent("transcribe this podcast please", cfg=cfg, deadline=0.0)
+        self.assertEqual(len(built), 3)
 
     def test_main_never_fails_on_bad_stdin(self):
         with mock.patch("sys.stdin", io.StringIO("not json")):
